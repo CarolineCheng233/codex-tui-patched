@@ -14,7 +14,10 @@
 //! only after the load succeeds.
 
 use std::collections::BTreeMap;
+use std::fs;
 use std::io::Write;
+use std::path::Path;
+use std::path::PathBuf;
 
 mod ambient;
 mod asset_pack;
@@ -154,9 +157,6 @@ pub(crate) struct PetImageRenderState {
 }
 
 /// A local-file image placement owned by the transcript workspace.
-///
-/// The path is intentionally the only image payload retained by the TUI. iTerm2's Kitty
-/// compatibility protocol reads the file itself, so image bytes are neither decoded nor cached.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct LocalImagePreviewDraw {
     pub(crate) image_id: u32,
@@ -167,9 +167,81 @@ pub(crate) struct LocalImagePreviewDraw {
     pub(crate) rows: u16,
 }
 
+#[derive(Debug)]
+struct RenderedLocalImagePreview {
+    request: LocalImagePreviewDraw,
+    /// A downscaled PNG created for a non-PNG input. It is never retained after the preview
+    /// stops being visible.
+    temporary_path: Option<PathBuf>,
+}
+
 #[derive(Debug, Default)]
 pub(crate) struct LocalImagePreviewState {
-    rendered: BTreeMap<u32, LocalImagePreviewDraw>,
+    rendered: BTreeMap<u32, RenderedLocalImagePreview>,
+}
+
+impl Drop for LocalImagePreviewState {
+    fn drop(&mut self) {
+        for preview in self.rendered.values() {
+            remove_temporary_preview(&preview.temporary_path);
+        }
+    }
+}
+
+const MAX_PREVIEW_SOURCE_PIXELS: u64 = 12_000_000;
+const MAX_PREVIEW_DIMENSION: u32 = 1024;
+
+fn remove_temporary_preview(path: &Option<PathBuf>) {
+    if let Some(path) = path {
+        let _ = fs::remove_file(path);
+    }
+}
+
+/// Resolve an image to a PNG file without retaining image bytes in workspace state.
+///
+/// Kitty's `f=100` file transport accepts PNG only. PNG inputs stay zero-copy; other supported
+/// formats are decoded once, bounded to a thumbnail-sized transient file, and deleted on cleanup.
+fn preview_png_file(path: &Path) -> Result<(PathBuf, Option<PathBuf>)> {
+    let reader =
+        image::ImageReader::open(path).with_context(|| format!("open {}", path.display()))?;
+    let reader = reader
+        .with_guessed_format()
+        .with_context(|| format!("identify {}", path.display()))?;
+    if reader.format() == Some(image::ImageFormat::Png) {
+        return Ok((path.to_path_buf(), None));
+    }
+
+    let (width, height) = reader
+        .into_dimensions()
+        .with_context(|| format!("read dimensions for {}", path.display()))?;
+    let source_pixels = u64::from(width).saturating_mul(u64::from(height));
+    if source_pixels > MAX_PREVIEW_SOURCE_PIXELS {
+        anyhow::bail!(
+            "image {} is too large for a terminal preview ({source_pixels} pixels)",
+            path.display()
+        );
+    }
+
+    let image = image::ImageReader::open(path)
+        .with_context(|| format!("open {}", path.display()))?
+        .with_guessed_format()
+        .with_context(|| format!("identify {}", path.display()))?
+        .decode()
+        .with_context(|| format!("decode {}", path.display()))?;
+    let thumbnail = image.thumbnail(MAX_PREVIEW_DIMENSION, MAX_PREVIEW_DIMENSION);
+    let mut temporary = tempfile::Builder::new()
+        .prefix("codex-tui-preview-")
+        .suffix(".png")
+        .tempfile()
+        .context("create temporary terminal preview")?;
+    thumbnail
+        .write_to(&mut temporary, image::ImageFormat::Png)
+        .context("encode temporary terminal preview")?;
+    let temporary_path = temporary
+        .into_temp_path()
+        .keep()
+        .map_err(|err| anyhow::Error::msg(format!("persist temporary terminal preview: {err}")))?;
+    Ok((temporary_path.clone(), Some(temporary_path)))
 }
 
 /// Render only changed local-file previews and delete placements no longer visible.
@@ -189,38 +261,66 @@ pub(crate) fn render_local_image_previews(
         .map(|request| (request.image_id, request))
         .collect::<BTreeMap<_, _>>();
 
-    for image_id in state.rendered.keys().copied() {
-        if !requested.contains_key(&image_id) {
+    let removed = state
+        .rendered
+        .keys()
+        .copied()
+        .filter(|image_id| !requested.contains_key(image_id))
+        .collect::<Vec<_>>();
+    for image_id in removed {
+        if let Some(previous) = state.rendered.remove(&image_id) {
             write!(writer, "{}", image_protocol::kitty_delete_image(image_id))?;
+            remove_temporary_preview(&previous.temporary_path);
         }
     }
 
-    for request in requests {
-        if state.rendered.get(&request.image_id) == Some(request) {
+    for request in requested.values() {
+        if state
+            .rendered
+            .get(&request.image_id)
+            .is_some_and(|previous| previous.request == *request)
+        {
             continue;
         }
-        if state.rendered.contains_key(&request.image_id) {
+        let (transmitted_path, temporary_path) =
+            preview_png_file(&request.path).map_err(PetImageRenderError::Asset)?;
+        if let Some(previous) = state.rendered.remove(&request.image_id) {
             write!(
                 writer,
                 "{}",
                 image_protocol::kitty_delete_image(request.image_id)
             )?;
+            remove_temporary_preview(&previous.temporary_path);
         }
         let payload = image_protocol::kitty_transmit_png_file_with_id(
-            &request.path,
+            &transmitted_path,
             request.columns,
             request.rows,
             Some(request.image_id),
         )
-        .map_err(PetImageRenderError::Asset)?;
-        queue!(writer, SavePosition)?;
-        queue!(writer, MoveTo(request.x, request.y))?;
-        write!(writer, "{payload}")?;
-        queue!(writer, RestorePosition)?;
+        .map_err(PetImageRenderError::Asset);
+        let render_result = (|| -> std::result::Result<(), PetImageRenderError> {
+            let payload = payload?;
+            queue!(writer, SavePosition)?;
+            queue!(writer, MoveTo(request.x, request.y))?;
+            write!(writer, "{payload}")?;
+            queue!(writer, RestorePosition)?;
+            Ok(())
+        })();
+        if let Err(err) = render_result {
+            remove_temporary_preview(&temporary_path);
+            return Err(err);
+        }
+        state.rendered.insert(
+            request.image_id,
+            RenderedLocalImagePreview {
+                request: request.clone(),
+                temporary_path,
+            },
+        );
     }
 
     writer.flush()?;
-    state.rendered = requested;
     Ok(())
 }
 
@@ -457,10 +557,10 @@ mod tests {
     fn local_input_preview_references_the_file_and_skips_unchanged_requests() {
         let dir = tempfile::tempdir().unwrap();
         let frame = dir.path().join("input.png");
-        std::fs::write(&frame, b"png").unwrap();
+        image::RgbaImage::new(4, 3).save(&frame).unwrap();
         let request = LocalImagePreviewDraw {
             image_id: 0xC100_0000,
-            path: frame,
+            path: frame.clone(),
             x: 2,
             y: 3,
             columns: 16,
@@ -474,10 +574,86 @@ mod tests {
         let first = String::from_utf8(output.clone()).unwrap();
         assert!(first.contains("a=T,t=f,f=100,c=16,r=6,q=2,i=3238002688;"));
         assert!(!first.contains("cG5n"));
+        assert!(
+            state
+                .rendered
+                .get(&0xC100_0000)
+                .unwrap()
+                .temporary_path
+                .is_none()
+        );
 
         output.clear();
         render_local_image_previews(&mut output, &mut state, &[request]).unwrap();
         assert!(output.is_empty());
+    }
+
+    #[test]
+    fn local_input_preview_converts_jpeg_and_removes_the_transient_png() {
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir.path().join("input.jpg");
+        image::RgbImage::new(4, 3)
+            .save_with_format(&source, image::ImageFormat::Jpeg)
+            .unwrap();
+        let request = LocalImagePreviewDraw {
+            image_id: 0xC100_0001,
+            path: source.clone(),
+            x: 2,
+            y: 3,
+            columns: 16,
+            rows: 6,
+        };
+        let mut output = Vec::new();
+        let mut state = LocalImagePreviewState::default();
+
+        render_local_image_previews(&mut output, &mut state, &[request]).unwrap();
+
+        let rendered = state.rendered.get(&0xC100_0001).unwrap();
+        let temporary_path = rendered.temporary_path.clone().expect("temporary PNG path");
+        assert_ne!(temporary_path, source);
+        assert_eq!(
+            image::ImageReader::open(&temporary_path)
+                .unwrap()
+                .with_guessed_format()
+                .unwrap()
+                .format(),
+            Some(image::ImageFormat::Png)
+        );
+
+        render_local_image_previews(&mut output, &mut state, &[]).unwrap();
+        assert!(!temporary_path.exists());
+        assert!(state.rendered.is_empty());
+    }
+
+    #[test]
+    fn local_input_preview_state_drop_removes_a_transient_png() {
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir.path().join("input.jpg");
+        image::RgbImage::new(4, 3)
+            .save_with_format(&source, image::ImageFormat::Jpeg)
+            .unwrap();
+        let temporary_path = {
+            let request = LocalImagePreviewDraw {
+                image_id: 0xC100_0002,
+                path: source,
+                x: 2,
+                y: 3,
+                columns: 16,
+                rows: 6,
+            };
+            let mut output = Vec::new();
+            let mut state = LocalImagePreviewState::default();
+            render_local_image_previews(&mut output, &mut state, &[request]).unwrap();
+            state
+                .rendered
+                .get(&0xC100_0002)
+                .unwrap()
+                .temporary_path
+                .clone()
+                .expect("temporary PNG path")
+        };
+
+        assert!(!temporary_path.exists());
     }
 
     #[test]
