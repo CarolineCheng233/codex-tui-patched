@@ -268,8 +268,10 @@ pub(crate) fn render_local_image_previews(
         .filter(|image_id| !requested.contains_key(image_id))
         .collect::<Vec<_>>();
     for image_id in removed {
-        if let Some(previous) = state.rendered.remove(&image_id) {
+        if state.rendered.contains_key(&image_id) {
             write!(writer, "{}", image_protocol::kitty_delete_image(image_id))?;
+        }
+        if let Some(previous) = state.rendered.remove(&image_id) {
             remove_temporary_preview(&previous.temporary_path);
         }
     }
@@ -284,12 +286,17 @@ pub(crate) fn render_local_image_previews(
         }
         let (transmitted_path, temporary_path) =
             preview_png_file(&request.path).map_err(PetImageRenderError::Asset)?;
-        if let Some(previous) = state.rendered.remove(&request.image_id) {
-            write!(
+        if state.rendered.contains_key(&request.image_id)
+            && let Err(err) = write!(
                 writer,
                 "{}",
                 image_protocol::kitty_delete_image(request.image_id)
-            )?;
+            )
+        {
+            remove_temporary_preview(&temporary_path);
+            return Err(err.into());
+        }
+        if let Some(previous) = state.rendered.remove(&request.image_id) {
             remove_temporary_preview(&previous.temporary_path);
         }
         let payload = image_protocol::kitty_transmit_png_file_with_id(
@@ -653,6 +660,49 @@ mod tests {
                 .expect("temporary PNG path")
         };
 
+        assert!(!temporary_path.exists());
+    }
+
+    #[test]
+    fn local_input_preview_write_failure_keeps_cleanup_state() {
+        struct FailingWriter;
+
+        impl Write for FailingWriter {
+            fn write(&mut self, _buf: &[u8]) -> std::io::Result<usize> {
+                Err(std::io::Error::other("injected preview write failure"))
+            }
+
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir.path().join("input.jpg");
+        image::RgbImage::new(4, 3)
+            .save_with_format(&source, image::ImageFormat::Jpeg)
+            .unwrap();
+        let request = LocalImagePreviewDraw {
+            image_id: 0xC100_0003,
+            path: source,
+            x: 2,
+            y: 3,
+            columns: 16,
+            rows: 6,
+        };
+        let mut state = LocalImagePreviewState::default();
+        render_local_image_previews(&mut Vec::new(), &mut state, &[request]).unwrap();
+        let temporary_path = state
+            .rendered
+            .get(&0xC100_0003)
+            .unwrap()
+            .temporary_path
+            .clone()
+            .expect("temporary PNG path");
+
+        assert!(render_local_image_previews(&mut FailingWriter, &mut state, &[]).is_err());
+        assert!(state.rendered.contains_key(&0xC100_0003));
+        drop(state);
         assert!(!temporary_path.exists());
     }
 
