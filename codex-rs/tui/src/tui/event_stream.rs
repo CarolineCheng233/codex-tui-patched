@@ -247,7 +247,8 @@ impl<S: EventSource + Default + Unpin> TuiEventStream<S> {
         }
     }
 
-    /// Map a crossterm event to a [`TuiEvent`], skipping events we don't use (mouse events, etc.).
+    /// Map a crossterm event to a [`TuiEvent`]. Workspace overlays selectively consume mouse
+    /// scroll events while the normal TUI continues to ignore them.
     fn map_crossterm_event(&mut self, event: Event) -> Option<TuiEvent> {
         match event {
             Event::Key(key_event) => {
@@ -271,6 +272,16 @@ impl<S: EventSource + Default + Unpin> TuiEventStream<S> {
                 Some(TuiEvent::Resize(ratatui::layout::Size { width, height }))
             }
             Event::Paste(pasted) => Some(TuiEvent::Paste(pasted)),
+            Event::Mouse(mouse_event)
+                if matches!(
+                    mouse_event.kind,
+                    crossterm::event::MouseEventKind::ScrollUp
+                        | crossterm::event::MouseEventKind::ScrollDown
+                ) =>
+            {
+                Some(TuiEvent::Mouse(mouse_event))
+            }
+            Event::Mouse(_) => None,
             Event::FocusGained => {
                 self.terminal_focused.store(true, Ordering::Relaxed);
                 // Keep the startup-cached palette: querying terminal colors here blocks the
@@ -281,7 +292,6 @@ impl<S: EventSource + Default + Unpin> TuiEventStream<S> {
                 self.terminal_focused.store(false, Ordering::Relaxed);
                 Some(TuiEvent::FocusLost)
             }
-            _ => None,
         }
     }
 }
@@ -417,27 +427,22 @@ mod tests {
     }
 
     #[tokio::test(flavor = "current_thread")]
-    async fn key_event_skips_unmapped() {
+    async fn scroll_mouse_event_is_forwarded() {
         let (broker, handle, _draw_tx, draw_rx, terminal_focused) = setup();
         let mut stream = make_stream(broker, draw_rx, terminal_focused);
 
-        handle.send(Ok(Event::Mouse(MouseEvent {
-            kind: MouseEventKind::Moved,
+        let expected = MouseEvent {
+            kind: MouseEventKind::ScrollUp,
             column: 0,
             row: 0,
             modifiers: KeyModifiers::NONE,
-        })));
-        handle.send(Ok(Event::Key(KeyEvent::new(
-            KeyCode::Char('a'),
-            KeyModifiers::NONE,
-        ))));
+        };
+        handle.send(Ok(Event::Mouse(expected)));
 
         let next = stream.next().await.unwrap();
         match next {
-            TuiEvent::Key(key) => {
-                assert_eq!(key, KeyEvent::new(KeyCode::Char('a'), KeyModifiers::NONE));
-            }
-            other => panic!("expected key event, got {other:?}"),
+            TuiEvent::Mouse(mouse) => assert_eq!(mouse, expected),
+            other => panic!("expected mouse event, got {other:?}"),
         }
     }
 

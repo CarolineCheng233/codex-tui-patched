@@ -46,6 +46,8 @@ use crate::tui;
 use crate::tui::TuiEvent;
 use crossterm::event::KeyCode;
 use crossterm::event::KeyEvent;
+use crossterm::event::MouseEvent;
+use crossterm::event::MouseEventKind;
 use ratatui::buffer::Buffer;
 use ratatui::buffer::Cell;
 use ratatui::layout::Rect;
@@ -502,6 +504,8 @@ pub(crate) struct TranscriptOverlay {
     local_image_previews_enabled: bool,
 }
 
+const WORKSPACE_WHEEL_SCROLL_ROWS: usize = 3;
+
 /// Cache key for the active-cell "live tail" appended to the transcript overlay.
 ///
 /// Changing any field implies a different rendered tail.
@@ -624,6 +628,35 @@ impl TranscriptOverlay {
         Ok(false)
     }
 
+    /// Consume a mouse wheel event without letting it reach the fixed composer.
+    pub(crate) fn handle_workspace_mouse(
+        &mut self,
+        tui: &mut tui::Tui,
+        mouse_event: MouseEvent,
+    ) -> Result<bool> {
+        if !self.is_workspace() {
+            return Ok(false);
+        }
+        match mouse_event.kind {
+            MouseEventKind::ScrollUp => {
+                self.view.scroll_offset = self
+                    .view
+                    .scroll_offset
+                    .saturating_sub(WORKSPACE_WHEEL_SCROLL_ROWS);
+            }
+            MouseEventKind::ScrollDown => {
+                self.view.scroll_offset = self
+                    .view
+                    .scroll_offset
+                    .saturating_add(WORKSPACE_WHEEL_SCROLL_ROWS);
+            }
+            _ => return Ok(false),
+        }
+        tui.frame_requester()
+            .schedule_frame_in(crate::tui::TARGET_FRAME_INTERVAL);
+        Ok(true)
+    }
+
     fn workspace_navigation_key(&self, key_event: KeyEvent) -> bool {
         self.view.keymap.page_up.is_pressed(key_event)
             || self.view.keymap.page_down.is_pressed(key_event)
@@ -633,6 +666,13 @@ impl TranscriptOverlay {
         self.is_workspace()
             && self.workspace_navigation_key(key_event)
             && self.should_load_older(key_event)
+    }
+
+    pub(crate) fn workspace_wheel_should_load_older(&self, mouse_event: MouseEvent) -> bool {
+        self.is_workspace()
+            && matches!(mouse_event.kind, MouseEventKind::ScrollUp)
+            && self.view.scroll_offset
+                <= self.view.last_content_height.unwrap_or(/*default*/ 0)
     }
 
     pub(crate) fn set_history_state(

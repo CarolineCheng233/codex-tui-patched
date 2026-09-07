@@ -21,6 +21,7 @@ use crate::key_hint;
 use super::DisableAlternateScroll;
 use super::EnableAlternateScroll;
 use super::Terminal;
+use crossterm::event::DisableMouseCapture;
 
 pub const SUSPEND_KEY: key_hint::KeyBinding = key_hint::ctrl(KeyCode::Char('z'));
 
@@ -65,6 +66,7 @@ impl SuspendContext {
         if alt_screen_active.load(Ordering::Relaxed) {
             // Leave alt-screen so the terminal returns to the normal buffer while suspended; also turn off alt-scroll.
             let _ = execute!(stdout(), DisableAlternateScroll);
+            let _ = execute!(stdout(), DisableMouseCapture);
             let _ = execute!(stdout(), LeaveAlternateScreen);
             self.set_resume_action(ResumeAction::RestoreAlt);
         } else {

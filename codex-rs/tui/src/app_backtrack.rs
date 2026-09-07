@@ -168,6 +168,9 @@ impl App {
 
     fn open_transcript_overlay_with_workspace(&mut self, tui: &mut tui::Tui, workspace: bool) {
         let _ = tui.enter_alt_screen();
+        if workspace && let Err(err) = tui.set_workspace_mouse_capture(true) {
+            tracing::debug!(error = %err, "failed to enable transcript workspace mouse capture");
+        }
         self.transcript_workspace_opened |= workspace;
         self.overlay = Some(if workspace {
             Overlay::new_transcript_workspace(
@@ -202,6 +205,9 @@ impl App {
 
     /// Close transcript overlay and restore normal UI.
     pub(crate) fn close_transcript_overlay(&mut self, tui: &mut tui::Tui) {
+        if let Err(err) = tui.set_workspace_mouse_capture(false) {
+            tracing::debug!(error = %err, "failed to disable transcript workspace mouse capture");
+        }
         if let Err(err) = tui.draw_local_image_previews(&[]) {
             tracing::debug!(error = %err, "failed to clear transcript image previews");
         }

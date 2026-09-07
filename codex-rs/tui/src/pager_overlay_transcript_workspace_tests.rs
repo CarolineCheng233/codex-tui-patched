@@ -6,6 +6,8 @@ use crate::history_cell::UserHistoryCell;
 use crossterm::event::KeyCode;
 use crossterm::event::KeyEvent;
 use crossterm::event::KeyModifiers;
+use crossterm::event::MouseEvent;
+use crossterm::event::MouseEventKind;
 use ratatui::layout::Rect;
 use ratatui::text::Line;
 use std::sync::Arc;
@@ -44,6 +46,46 @@ async fn workspace_keeps_ctrl_c_available_to_the_existing_composer() {
             .expect("workspace key routing")
     );
     assert!(!overlay.is_done());
+}
+
+#[tokio::test]
+async fn workspace_wheel_scrolls_only_the_transcript() {
+    let mut overlay = TranscriptOverlay::new_workspace(
+        Vec::new(),
+        crate::keymap::RuntimeKeymap::defaults().pager,
+    );
+    let mut tui = crate::tui::test_support::make_test_tui().expect("test tui");
+    overlay.view.scroll_offset = 6;
+
+    assert!(
+        overlay
+            .handle_workspace_mouse(
+                &mut tui,
+                MouseEvent {
+                    kind: MouseEventKind::ScrollUp,
+                    column: 0,
+                    row: 0,
+                    modifiers: KeyModifiers::NONE,
+                },
+            )
+            .expect("workspace mouse routing")
+    );
+    assert_eq!(overlay.view.scroll_offset, 3);
+
+    assert!(
+        overlay
+            .handle_workspace_mouse(
+                &mut tui,
+                MouseEvent {
+                    kind: MouseEventKind::ScrollDown,
+                    column: 0,
+                    row: 0,
+                    modifiers: KeyModifiers::NONE,
+                },
+            )
+            .expect("workspace mouse routing")
+    );
+    assert_eq!(overlay.view.scroll_offset, 6);
 }
 
 #[test]

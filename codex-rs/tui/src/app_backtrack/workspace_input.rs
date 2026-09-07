@@ -9,15 +9,27 @@ impl App {
         app_server: &mut AppServerSession,
         event: TuiEvent,
     ) -> Result<bool> {
-        if let TuiEvent::Key(key_event) = &event
-            && let Some(Overlay::Transcript(overlay)) = self.overlay.as_ref()
-            && overlay.workspace_should_load_older(*key_event)
+        let should_load_older = match (&event, self.overlay.as_ref()) {
+            (TuiEvent::Key(key_event), Some(Overlay::Transcript(overlay))) => {
+                overlay.workspace_should_load_older(*key_event)
+            }
+            (TuiEvent::Mouse(mouse_event), Some(Overlay::Transcript(overlay))) => {
+                overlay.workspace_wheel_should_load_older(*mouse_event)
+            }
+            _ => false,
+        };
+        let load_from_start = matches!(
+            (&event, self.overlay.as_ref()),
+            (TuiEvent::Key(key_event), Some(Overlay::Transcript(overlay)))
+                if overlay.should_load_from_start(*key_event)
+        );
+        if should_load_older
             && let Some(thread_id) = self.chat_widget.thread_id()
             && app_server.has_older_history(thread_id)
             && self.request_older_history_page(app_server, thread_id)
         {
             if let Some(Overlay::Transcript(overlay)) = self.overlay.as_mut() {
-                overlay.set_history_state(if overlay.should_load_from_start(*key_event) {
+                overlay.set_history_state(if load_from_start {
                     TranscriptHistoryState::LoadingBeginning
                 } else {
                     TranscriptHistoryState::LoadingOlder
@@ -43,6 +55,11 @@ impl App {
             TuiEvent::Paste(pasted) => {
                 let pasted = pasted.replace("\r\n", "\n").replace('\r', "\n");
                 self.chat_widget.handle_paste(pasted);
+            }
+            TuiEvent::Mouse(mouse_event) => {
+                if let Some(Overlay::Transcript(overlay)) = self.overlay.as_mut() {
+                    overlay.handle_workspace_mouse(tui, mouse_event)?;
+                }
             }
             event @ (TuiEvent::Draw
             | TuiEvent::Resume

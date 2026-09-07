@@ -852,7 +852,7 @@ impl App {
         let screen_size = tui.screen_size_for_event(&event)?;
         if !matches!(
             &event,
-            TuiEvent::Key(_) | TuiEvent::Paste(_) | TuiEvent::FocusLost
+            TuiEvent::Key(_) | TuiEvent::Paste(_) | TuiEvent::Mouse(_) | TuiEvent::FocusLost
         ) {
             self.expire_pending_key_chord();
             self.handle_draw_pre_render(tui, screen_size)?;
@@ -988,7 +988,7 @@ impl App {
                         self.app_event_tx.send(AppEvent::LaunchExternalEditor);
                     }
                 }
-                TuiEvent::FocusLost => {}
+                TuiEvent::Mouse(_) | TuiEvent::FocusLost => {}
             }
         }
         Ok(AppRunControl::Continue)

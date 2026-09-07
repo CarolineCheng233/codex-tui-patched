@@ -19,9 +19,11 @@ use crossterm::SynchronizedUpdate;
 use crossterm::cursor::SetCursorStyle;
 use crossterm::event::DisableBracketedPaste;
 use crossterm::event::DisableFocusChange;
+use crossterm::event::DisableMouseCapture;
 use crossterm::event::EnableBracketedPaste;
 #[cfg(not(windows))]
 use crossterm::event::EnableFocusChange;
+use crossterm::event::EnableMouseCapture;
 use crossterm::event::KeyEvent;
 use crossterm::terminal::EnterAlternateScreen;
 use crossterm::terminal::LeaveAlternateScreen;
@@ -105,6 +107,7 @@ fn should_emit_notification(condition: NotificationCondition, terminal_focused: 
 
 impl Drop for Tui {
     fn drop(&mut self) {
+        let _ = execute!(self.terminal.backend_mut(), DisableMouseCapture);
         if let Err(err) = self.clear_ambient_pet_image() {
             tracing::debug!(error = %err, "failed to clear ambient pet image on TUI drop");
         }
@@ -318,6 +321,7 @@ fn restore_common(
     if let Err(err) = execute!(stdout(), DisableBracketedPaste) {
         first_error.get_or_insert(err);
     }
+    let _ = execute!(stdout(), DisableMouseCapture);
     let _ = execute!(stdout(), DisableFocusChange);
     if matches!(raw_mode_restore, RawModeRestore::Disable)
         && let Err(err) = disable_raw_mode()
@@ -567,6 +571,8 @@ pub enum TuiEvent {
     Key(KeyEvent),
     /// A bracketed paste payload normalized by the app layer before it reaches the composer.
     Paste(String),
+    /// A terminal mouse event. Workspace overlays consume scroll events selectively.
+    Mouse(crossterm::event::MouseEvent),
     /// A terminal size notification and its reported dimensions.
     ///
     /// Resize is separate from `Draw` so the app can run feature-gated pre-render logic without
@@ -608,6 +614,8 @@ pub struct Tui {
     scrollback: ScrollbackStrategy,
     // When false, enter_alt_screen() becomes a no-op.
     alt_screen_enabled: bool,
+    // Mouse reporting is enabled only while the transcript workspace is visible.
+    workspace_mouse_capture_enabled: bool,
     // Keeps unmanaged process stderr writes out of the inline viewport.
     _stderr_guard: terminal_stderr::TerminalStderrGuard,
 }
@@ -663,6 +671,7 @@ impl Tui {
             notification_condition: NotificationCondition::default(),
             scrollback,
             alt_screen_enabled: true,
+            workspace_mouse_capture_enabled: false,
             _stderr_guard: stderr_guard,
         }
     }
@@ -670,6 +679,42 @@ impl Tui {
     /// Set whether alternate screen is enabled. When false, enter_alt_screen() becomes a no-op.
     pub fn set_alt_screen_enabled(&mut self, enabled: bool) {
         self.alt_screen_enabled = enabled;
+    }
+
+    /// Toggle terminal mouse reporting for the transcript workspace only.
+    ///
+    /// Alternate-scroll maps wheel events to arrows, which would move the composer cursor. The
+    /// workspace instead receives explicit wheel events and routes them to the transcript pane.
+    pub(crate) fn set_workspace_mouse_capture(&mut self, enabled: bool) -> Result<()> {
+        if self.workspace_mouse_capture_enabled == enabled {
+            return Ok(());
+        }
+        if enabled {
+            execute!(
+                self.terminal.backend_mut(),
+                DisableAlternateScroll,
+                EnableMouseCapture
+            )?;
+        } else {
+            execute!(self.terminal.backend_mut(), DisableMouseCapture)?;
+            if self.alt_screen_active.load(Ordering::Relaxed) {
+                execute!(self.terminal.backend_mut(), EnableAlternateScroll)?;
+            }
+        }
+        self.workspace_mouse_capture_enabled = enabled;
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    fn restore_workspace_mouse_capture_after_resume(&mut self) -> Result<()> {
+        if self.workspace_mouse_capture_enabled {
+            execute!(
+                self.terminal.backend_mut(),
+                DisableAlternateScroll,
+                EnableMouseCapture
+            )?;
+        }
+        Ok(())
     }
 
     pub fn set_notification_settings(
@@ -840,6 +885,13 @@ impl Tui {
         let _ = execute!(self.terminal.backend_mut(), EnterAlternateScreen);
         // Enable "alternate scroll" so terminals may translate wheel to arrows
         let _ = execute!(self.terminal.backend_mut(), EnableAlternateScroll);
+        if self.workspace_mouse_capture_enabled {
+            let _ = execute!(
+                self.terminal.backend_mut(),
+                DisableAlternateScroll,
+                EnableMouseCapture
+            );
+        }
         if let Ok(size) = self.terminal.size() {
             self.alt_saved_viewport = Some(self.terminal.viewport_area);
             self.terminal.resize(size)?;
@@ -860,8 +912,9 @@ impl Tui {
         if !self.alt_screen_enabled {
             return Ok(());
         }
-        // Disable alternate scroll when leaving alt-screen
+        // Disable alternate scroll and mouse reporting when leaving alt-screen.
         let _ = execute!(self.terminal.backend_mut(), DisableAlternateScroll);
+        let _ = execute!(self.terminal.backend_mut(), DisableMouseCapture);
         let _ = execute!(self.terminal.backend_mut(), LeaveAlternateScreen);
         if let Some(saved) = self.alt_saved_viewport.take() {
             self.terminal.set_viewport_area(saved);
@@ -1000,6 +1053,7 @@ impl Tui {
             #[cfg(unix)]
             if let Some(prepared) = prepared_resume.take() {
                 prepared.apply(&mut self.terminal, screen_size)?;
+                self.restore_workspace_mouse_capture_after_resume()?;
             }
 
             let terminal = &mut self.terminal;
@@ -1165,6 +1219,7 @@ impl Tui {
             #[cfg(unix)]
             if let Some(prepared) = prepared_resume.take() {
                 prepared.apply(&mut self.terminal, screen_size)?;
+                self.restore_workspace_mouse_capture_after_resume()?;
             }
 
             let terminal = &mut self.terminal;
