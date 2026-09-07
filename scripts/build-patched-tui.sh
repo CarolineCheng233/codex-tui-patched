@@ -8,6 +8,9 @@ target_dir="$repo_root/codex-rs/target"
 package_dir="$target_dir/codex-tui-package"
 python_bin=${PYTHON:-}
 
+# shellcheck source=ensure-rust-toolchain.sh
+. "$script_dir/ensure-rust-toolchain.sh"
+
 if [ -z "$python_bin" ]; then
     for candidate in python3.13 python3.12 python3.11 python3.10 python3; do
         if command -v "$candidate" >/dev/null 2>&1 && "$candidate" -c 'import sys; raise SystemExit(sys.version_info < (3, 10))'; then

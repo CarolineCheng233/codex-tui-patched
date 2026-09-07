@@ -9,6 +9,9 @@ codex_bin="$package_dir/bin/codex"
 host_bin="$package_dir/bin/codex-code-mode-host"
 host_source="$package_dir/CODE_MODE_HOST_SOURCE"
 
+# shellcheck source=ensure-rust-toolchain.sh
+. "$script_dir/ensure-rust-toolchain.sh"
+
 if [ ! -x "$codex_bin" ] || [ ! -x "$host_bin" ] || [ ! -s "$host_source" ]; then
     printf '%s\n' "Local package is missing. Run: $script_dir/build-patched-tui.sh" >&2
     exit 1
