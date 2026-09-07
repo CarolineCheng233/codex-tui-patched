@@ -7,8 +7,9 @@ repo_root=$(CDPATH= cd -- "$script_dir/.." && pwd)
 package_dir="$repo_root/codex-rs/target/codex-tui-package"
 codex_bin="$package_dir/bin/codex"
 host_bin="$package_dir/bin/codex-code-mode-host"
+host_source="$package_dir/CODE_MODE_HOST_SOURCE"
 
-if [ ! -x "$codex_bin" ] || [ ! -x "$host_bin" ]; then
+if [ ! -x "$codex_bin" ] || [ ! -x "$host_bin" ] || [ ! -s "$host_source" ]; then
     printf '%s\n' "Local package is missing. Run: $script_dir/build-patched-tui.sh" >&2
     exit 1
 fi

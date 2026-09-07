@@ -10,7 +10,7 @@
 /Users/chy/projects/.worktrees/codex-tui-workspace
 ```
 
-首次启动或源码更新后，构建独立的本地包（其中包含 Code Mode 所需的配套 host）：
+首次启动或源码更新后，构建独立的本地包。构建器会从系统已安装 Codex 的同目录复制官方 `codex-code-mode-host`，使本地包完整而不覆盖系统安装：
 
 ```sh
 cd "/Users/chy/projects/.worktrees/codex-tui-workspace"
@@ -23,7 +23,7 @@ cd "/Users/chy/projects/.worktrees/codex-tui-workspace"
 "/Users/chy/projects/.worktrees/codex-tui-workspace/scripts/codex-tui.sh"
 ```
 
-生成包的位置是 `codex-rs/target/codex-tui-package`。不要直接运行 `target/debug/codex`：它不保证携带 Code Mode host。
+生成包的位置是 `codex-rs/target/codex-tui-package`。构建器采用优化后的 release 二进制，避免调试二进制的巨大磁盘占用；不要直接运行 `target/debug/codex`：它不保证携带 Code Mode host。构建器会把实际 host 来源记入包内的 `CODE_MODE_HOST_SOURCE`；若官方 Codex 不在 `PATH` 中，可在构建时显式设置 `CODEX_CODE_MODE_HOST_BIN`。
 
 功能开关已在 `~/.codex/config.toml` 启用：
 
@@ -65,7 +65,7 @@ transcript_workspace = true
    ./scripts/codex-tui.sh --version
    ```
 
-   确认 `codex-rs/target/codex-tui-package/bin/` 同时存在可执行的 `codex` 和 `codex-code-mode-host`。
+   确认 `codex-rs/target/codex-tui-package/bin/` 同时存在可执行的 `codex` 和 `codex-code-mode-host`，并查看 `CODE_MODE_HOST_SOURCE` 确认它来自本机官方安装包。
 2. 启动一个需要持续执行的任务；在 Composer 输入文本，按 `Ctrl+C`，确认输入被清空且任务仍继续。`Ctrl+U` 的官方含义不变。
 3. 用鼠标滚轮或 `PageUp` 浏览旧记录，再输入文字，确认视图位置不跳到最底部，Composer 仍在底部；滚到已加载记录顶部时确认可继续加载更早历史。
 4. 使用 `Alt+Up/Down` 选中回合，并用 `Alt+Left/Right` 折叠和展开；确认摘要显示隐藏条目数量。
@@ -77,7 +77,7 @@ transcript_workspace = true
    ./scripts/verify-patched-tui.sh
    ```
 
-自动验收覆盖配置解析、键盘/鼠标路由、折叠、图片转换与清理、包内 Code Mode host 和启动器。iTerm2 的固定 Composer、滚动视觉效果与图片像素渲染仍必须按上述步骤人工确认。
+自动验收覆盖配置解析、键盘/鼠标路由、折叠、图片转换与清理、包内 Code Mode host 和启动器。iTerm2 的固定 Composer、滚动视觉效果与图片像素渲染仍必须按上述步骤人工确认。Code Mode 的 V8 host 由官方安装包提供；如果官方 Codex 升级后 Code Mode 无法启动，先重新构建本地包，仍异常则直接使用系统 `codex` 并按上游同步流程处理兼容性。
 
 ## 更新与回滚
 
