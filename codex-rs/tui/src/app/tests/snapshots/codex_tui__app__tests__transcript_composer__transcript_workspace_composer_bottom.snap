@@ -1,9 +1,9 @@
 ---
 source: tui/src/app/tests/transcript_composer.rs
-assertion_line: 175
+assertion_line: 177
 expression: text
 ---
-/ T R A N S C R I P T  ·  PgUp/PgDn scroll  ·  Ctrl+T close / / / / / /
+/ T R A N S C R I P T  ·  ⌥↑↓ turns  ·  ⌥← fold  ·  ⌥→ expand  ·  PgUp/P
 › first
 
 

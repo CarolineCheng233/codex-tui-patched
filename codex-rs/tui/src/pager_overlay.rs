@@ -60,6 +60,7 @@ use scrolling::CellRenderable;
 use scrolling::HyperlinkLinesRenderable;
 use scrolling::render_offset_content;
 use transcript_workspace::TranscriptMode;
+use transcript_workspace::TranscriptTurnState;
 pub(crate) use transcript_workspace::TranscriptWorkspaceLayout;
 
 pub(crate) enum Overlay {
@@ -482,17 +483,19 @@ impl TranscriptHistoryState {
 pub(crate) struct TranscriptOverlay {
     /// Pager UI state and the renderables currently displayed.
     ///
-    /// The invariant is that `view.renderables` is `render_cells(cells)` plus an optional trailing
-    /// live-tail renderable appended after the committed cells.
+    /// The committed cells are rendered directly, except that collapsed workspace turns replace
+    /// their hidden cells with one summary row.
     view: PagerView,
     /// Committed transcript cells (does not include the live tail).
     cells: Vec<Arc<dyn HistoryCell>>,
     highlight_cell: Option<usize>,
     /// Cache key for the render-only live tail appended after committed cells.
     live_tail_key: Option<LiveTailKey>,
+    live_tail_present: bool,
     history_state: TranscriptHistoryState,
     is_done: bool,
     mode: TranscriptMode,
+    workspace_turns: TranscriptTurnState,
 }
 
 /// Cache key for the active-cell "live tail" appended to the transcript overlay.
@@ -531,12 +534,18 @@ impl TranscriptOverlay {
         keymap: PagerKeymap,
         mode: TranscriptMode,
     ) -> Self {
+        let workspace_turns = if mode.is_workspace() {
+            TranscriptTurnState::new(&transcript_cells)
+        } else {
+            Default::default()
+        };
         Self {
             view: PagerView::new(
                 Self::render_cells(
                     &transcript_cells,
                     /*highlight_cell*/ None,
                     TranscriptHistoryState::Idle,
+                    &workspace_turns,
                 ),
                 mode.title().to_string(),
                 usize::MAX,
@@ -545,9 +554,11 @@ impl TranscriptOverlay {
             cells: transcript_cells,
             highlight_cell: None,
             live_tail_key: None,
+            live_tail_present: false,
             history_state: TranscriptHistoryState::Idle,
             is_done: false,
             mode,
+            workspace_turns,
         }
     }
 
@@ -569,6 +580,26 @@ impl TranscriptOverlay {
         }
         if self.view.keymap.close_transcript.is_pressed(key_event) {
             self.is_done = true;
+            return Ok(true);
+        }
+        let turn_shortcut = key_event.modifiers == crossterm::event::KeyModifiers::ALT
+            && matches!(
+                key_event.code,
+                KeyCode::Up | KeyCode::Down | KeyCode::Left | KeyCode::Right
+            );
+        if turn_shortcut {
+            let changed = match key_event.code {
+                KeyCode::Up => self.workspace_turns.select_previous(),
+                KeyCode::Down => self.workspace_turns.select_next(),
+                KeyCode::Left => self.workspace_turns.collapse_selected(&self.cells),
+                KeyCode::Right => self.workspace_turns.expand_selected(),
+                _ => false,
+            };
+            if changed {
+                self.rebuild_workspace_turn_renderables();
+                tui.frame_requester()
+                    .schedule_frame_in(crate::tui::TARGET_FRAME_INTERVAL);
+            }
             return Ok(true);
         }
         if self.workspace_navigation_key(key_event) {
@@ -619,12 +650,28 @@ impl TranscriptOverlay {
         cells: &[Arc<dyn HistoryCell>],
         highlight_cell: Option<usize>,
         history_state: TranscriptHistoryState,
+        workspace_turns: &TranscriptTurnState,
     ) -> Vec<Box<dyn Renderable>> {
-        cells
-            .iter()
-            .enumerate()
-            .map(|(i, cell)| Self::render_cell(cell, i, highlight_cell, history_state))
-            .collect()
+        let highlighted_cell = workspace_turns.selected_turn_start().or(highlight_cell);
+        let mut renderables = Vec::with_capacity(cells.len());
+        for (index, cell) in cells.iter().enumerate() {
+            if workspace_turns.is_cell_hidden(index) {
+                continue;
+            }
+            renderables.push(Self::render_cell(
+                cell,
+                index,
+                highlighted_cell,
+                history_state,
+            ));
+            if workspace_turns.is_collapsed(index) {
+                let hidden_cells = workspace_turns.hidden_cell_count_after(index, cells);
+                renderables.push(Box::new(
+                    Line::from(format!("  ▸ {hidden_cells} hidden transcript item(s)")).dim(),
+                ));
+            }
+        }
+        renderables
     }
 
     /// Build the renderable for a committed cell, caching its height when the cell is stable.
@@ -671,35 +718,43 @@ impl TranscriptOverlay {
     /// insertion to preserve the "follow along" behavior.
     pub(crate) fn insert_cell(&mut self, cell: Arc<dyn HistoryCell>) {
         let follow_bottom = self.view.is_scrolled_to_bottom();
-        let had_prior_cells = !self.cells.is_empty();
         let tail_renderable = self.take_live_tail_renderable();
-        let cell_renderable = Self::render_cell(
-            &cell,
-            self.cells.len(),
-            self.highlight_cell,
-            self.history_state,
-        );
-        self.cells.push(cell);
-        self.view.renderables.push(cell_renderable);
-        if let Some(tail) = tail_renderable {
-            let tail = if !had_prior_cells
-                && self
-                    .live_tail_key
-                    .is_some_and(|key| !key.is_stream_continuation)
-            {
-                // The tail was rendered as the only entry, so it lacks a top
-                // inset; add one now that it follows a committed cell.
-                Box::new(InsetRenderable::new(
-                    tail,
-                    Insets::tlbr(
-                        /*top*/ 1, /*left*/ 0, /*bottom*/ 0, /*right*/ 0,
-                    ),
-                )) as Box<dyn Renderable>
-            } else {
-                tail
-            };
-            self.view.renderables.push(tail);
+        if !self.is_workspace() {
+            let had_prior_cells = !self.cells.is_empty();
+            let cell_renderable = Self::render_cell(
+                &cell,
+                self.cells.len(),
+                self.highlight_cell,
+                self.history_state,
+            );
+            self.cells.push(cell);
+            self.view.renderables.push(cell_renderable);
+            if let Some(tail) = tail_renderable {
+                let tail = if !had_prior_cells
+                    && self
+                        .live_tail_key
+                        .is_some_and(|key| !key.is_stream_continuation)
+                {
+                    Box::new(InsetRenderable::new(
+                        tail,
+                        Insets::tlbr(
+                            /*top*/ 1, /*left*/ 0, /*bottom*/ 0, /*right*/ 0,
+                        ),
+                    )) as Box<dyn Renderable>
+                } else {
+                    tail
+                };
+                self.view.renderables.push(tail);
+                self.live_tail_present = true;
+            }
+            if follow_bottom {
+                self.view.scroll_offset = usize::MAX;
+            }
+            return;
         }
+        self.cells.push(cell);
+        self.workspace_turns.refresh_after_append(&self.cells);
+        self.rebuild_renderables(tail_renderable);
         if follow_bottom {
             self.view.scroll_offset = usize::MAX;
         }
@@ -734,6 +789,11 @@ impl TranscriptOverlay {
             .rposition(|cell| cell.as_any().is::<SessionInfoCell>())
             .map_or(/*default*/ 0, |index| index.saturating_add(/*rhs*/ 1));
         self.cells.splice(insert_at..insert_at, cells);
+        if self.is_workspace() {
+            self.workspace_turns
+                .shift_indices_from(insert_at, added_cells);
+            self.workspace_turns.refresh_after_append(&self.cells);
+        }
         for index in [
             &mut self.highlight_cell,
             &mut self.view.pending_scroll_chunk,
@@ -766,6 +826,9 @@ impl TranscriptOverlay {
         let follow_bottom = self.view.is_scrolled_to_bottom();
         let live_tail = self.take_live_tail_renderable();
         self.cells = cells;
+        if self.is_workspace() {
+            self.workspace_turns.reset(&self.cells);
+        }
         if self
             .highlight_cell
             .is_some_and(|idx| idx >= self.cells.len())
@@ -809,6 +872,9 @@ impl TranscriptOverlay {
             }
             self.cells
                 .splice(clamped_start..clamped_end, std::iter::once(consolidated));
+            if self.is_workspace() {
+                self.workspace_turns.reset(&self.cells);
+            }
             if self
                 .highlight_cell
                 .is_some_and(|highlight_cell| highlight_cell >= self.cells.len())
@@ -854,6 +920,7 @@ impl TranscriptOverlay {
 
         self.take_live_tail_renderable();
         self.live_tail_key = next_key;
+        self.live_tail_present = false;
 
         if let Some(key) = next_key {
             let lines = compute_lines(width).unwrap_or_default();
@@ -863,6 +930,7 @@ impl TranscriptOverlay {
                     !self.cells.is_empty(),
                     key.is_stream_continuation,
                 ));
+                self.live_tail_present = true;
             }
         }
         if follow_bottom {
@@ -873,17 +941,20 @@ impl TranscriptOverlay {
     pub(crate) fn set_highlight_cell(&mut self, cell: Option<usize>) {
         let previous = self.highlight_cell;
         self.highlight_cell = cell;
-        // Highlighting changes only these cells' styling. Keep the other renderables and their
-        // cached heights so moving between prompts does not lay out the entire transcript again.
         if previous != cell {
-            for index in [previous, cell].into_iter().flatten() {
-                if let Some(history_cell) = self.cells.get(index) {
-                    self.view.renderables[index] = Self::render_cell(
-                        history_cell,
-                        index,
-                        self.highlight_cell,
-                        self.history_state,
-                    );
+            if self.is_workspace() {
+                let live_tail = self.take_live_tail_renderable();
+                self.rebuild_renderables(live_tail);
+            } else {
+                for index in [previous, cell].into_iter().flatten() {
+                    if let Some(history_cell) = self.cells.get(index) {
+                        self.view.renderables[index] = Self::render_cell(
+                            history_cell,
+                            index,
+                            self.highlight_cell,
+                            self.history_state,
+                        );
+                    }
                 }
             }
         }
@@ -902,11 +973,43 @@ impl TranscriptOverlay {
 
     // Detach the live tail before changing cells: their old count identifies the tail renderable.
     fn rebuild_renderables(&mut self, tail_renderable: Option<Box<dyn Renderable>>) {
-        self.view.renderables =
-            Self::render_cells(&self.cells, self.highlight_cell, self.history_state);
+        self.view.renderables = Self::render_cells(
+            &self.cells,
+            self.highlight_cell,
+            self.history_state,
+            &self.workspace_turns,
+        );
         if let Some(tail) = tail_renderable {
             self.view.renderables.push(tail);
+            self.live_tail_present = true;
         }
+    }
+
+    fn rebuild_workspace_turn_renderables(&mut self) {
+        let live_tail = self.take_live_tail_renderable();
+        self.rebuild_renderables(live_tail);
+        if let Some(selected_turn) = self.workspace_turns.selected_turn_start()
+            && let Some(renderable_index) = self.renderable_index_for_cell(selected_turn)
+        {
+            self.view.scroll_chunk_into_view(renderable_index);
+        }
+    }
+
+    fn renderable_index_for_cell(&self, cell_index: usize) -> Option<usize> {
+        let mut renderable_index = 0usize;
+        for (index, _) in self.cells.iter().enumerate() {
+            if self.workspace_turns.is_cell_hidden(index) {
+                continue;
+            }
+            if index == cell_index {
+                return Some(renderable_index);
+            }
+            renderable_index = renderable_index.saturating_add(1);
+            if self.workspace_turns.is_collapsed(index) {
+                renderable_index = renderable_index.saturating_add(1);
+            }
+        }
+        None
     }
 
     /// Removes and returns the cached live-tail renderable, if present.
@@ -915,7 +1018,10 @@ impl TranscriptOverlay {
     /// cell renderables, so this relies on the live tail always being the final entry in
     /// `view.renderables` when present.
     fn take_live_tail_renderable(&mut self) -> Option<Box<dyn Renderable>> {
-        (self.view.renderables.len() > self.cells.len()).then(|| self.view.renderables.pop())?
+        if !std::mem::take(&mut self.live_tail_present) {
+            return None;
+        }
+        self.view.renderables.pop()
     }
 
     fn live_tail_renderable(
