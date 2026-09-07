@@ -2,7 +2,7 @@ name: Check OpenAI Codex upstream
 
 on:
   schedule:
-    - cron: "17 2 * * 1-5"
+    - cron: "17 */4 * * *"
   workflow_dispatch:
 
 permissions:

@@ -3,7 +3,7 @@ source: tui/src/app/tests/transcript_composer.rs
 assertion_line: 177
 expression: text
 ---
-/ T R A N S C R I P T  ·  ⌥↑↓ turns  ·  ⌥← fold  ·  ⌥→ expand  ·  PgUp/P
+/ T R A N S C R I P T  ·  ⌥↑↓ turns  ·  ⌥← fold  ·  ⌥→ expand  ·  wheel/
 › first
 
 

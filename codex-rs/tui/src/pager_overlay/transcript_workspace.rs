@@ -24,7 +24,7 @@ impl TranscriptMode {
         match self {
             Self::Viewer => "T R A N S C R I P T",
             Self::Workspace => {
-                "T R A N S C R I P T  ·  ⌥↑↓ turns  ·  ⌥← fold  ·  ⌥→ expand  ·  PgUp/PgDn scroll  ·  Ctrl+T close"
+                "T R A N S C R I P T  ·  ⌥↑↓ turns  ·  ⌥← fold  ·  ⌥→ expand  ·  wheel/PgUp/PgDn scroll  ·  Ctrl+T close"
             }
         }
     }

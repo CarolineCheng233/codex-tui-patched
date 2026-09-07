@@ -18,7 +18,7 @@ The initial downstream base is upstream commit `7769bccbb2b4e9469a36b12510e73594
 
 ## Upstream update policy
 
-`.github/workflows/upstream-sync.yml` checks `upstream/main` on weekdays and opens or refreshes a pull request when new commits are available. It never merges updates into `main` automatically.
+`.github/workflows/upstream-sync.yml` checks `upstream/main` every four hours and opens or refreshes a pull request when new commits are available. It never merges updates into `main` automatically. The workflow can also be run immediately through GitHub Actions' `workflow_dispatch`.
 
 For every sync pull request:
 
