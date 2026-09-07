@@ -119,6 +119,11 @@ impl ExternalWriterNotice {
 }
 
 impl ChatWidget {
+    pub(crate) fn transcript_workspace_bottom_pane(&self) -> RenderableItem<'_> {
+        self.bottom_pane
+            .as_renderable_with_composer_right_reserve(/*composer_right_reserve*/ 0)
+    }
+
     pub(crate) fn as_renderable(&self) -> RenderableItem<'_> {
         if self
             .bottom_pane

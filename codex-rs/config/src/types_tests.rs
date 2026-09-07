@@ -2,6 +2,13 @@ use super::*;
 use pretty_assertions::assert_eq;
 
 #[test]
+fn tui_transcript_workspace_can_be_enabled_from_config() {
+    let tui: Tui = toml::from_str("transcript_workspace = true").expect("valid tui config");
+
+    assert!(tui.transcript_workspace);
+}
+
+#[test]
 fn deserialize_skill_config_with_name_selector() {
     let cfg: SkillConfig = toml::from_str(
         r#"

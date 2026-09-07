@@ -16,6 +16,11 @@
 //! mutates in place or when its transcript output is time-dependent.
 
 mod scrolling;
+mod transcript_workspace;
+
+#[cfg(test)]
+#[path = "pager_overlay_transcript_workspace_tests.rs"]
+mod transcript_workspace_tests;
 
 #[cfg(test)]
 #[path = "pager_overlay/highlight_tests.rs"]
@@ -54,6 +59,8 @@ use ratatui::widgets::Wrap;
 use scrolling::CellRenderable;
 use scrolling::HyperlinkLinesRenderable;
 use scrolling::render_offset_content;
+use transcript_workspace::TranscriptMode;
+pub(crate) use transcript_workspace::TranscriptWorkspaceLayout;
 
 pub(crate) enum Overlay {
     Transcript(TranscriptOverlay),
@@ -63,6 +70,13 @@ pub(crate) enum Overlay {
 impl Overlay {
     pub(crate) fn new_transcript(cells: Vec<Arc<dyn HistoryCell>>, keymap: PagerKeymap) -> Self {
         Self::Transcript(TranscriptOverlay::new(cells, keymap))
+    }
+
+    pub(crate) fn new_transcript_workspace(
+        cells: Vec<Arc<dyn HistoryCell>>,
+        keymap: PagerKeymap,
+    ) -> Self {
+        Self::Transcript(TranscriptOverlay::new_workspace(cells, keymap))
     }
 
     pub(crate) fn new_static_with_lines(
@@ -478,6 +492,7 @@ pub(crate) struct TranscriptOverlay {
     live_tail_key: Option<LiveTailKey>,
     history_state: TranscriptHistoryState,
     is_done: bool,
+    mode: TranscriptMode,
 }
 
 /// Cache key for the active-cell "live tail" appended to the transcript overlay.
@@ -501,6 +516,21 @@ impl TranscriptOverlay {
     /// This overlay does not own the "active cell"; callers may optionally append a live tail via
     /// `sync_live_tail` during draws to reflect in-flight activity.
     pub(crate) fn new(transcript_cells: Vec<Arc<dyn HistoryCell>>, keymap: PagerKeymap) -> Self {
+        Self::with_mode(transcript_cells, keymap, TranscriptMode::Viewer)
+    }
+
+    pub(crate) fn new_workspace(
+        transcript_cells: Vec<Arc<dyn HistoryCell>>,
+        keymap: PagerKeymap,
+    ) -> Self {
+        Self::with_mode(transcript_cells, keymap, TranscriptMode::Workspace)
+    }
+
+    fn with_mode(
+        transcript_cells: Vec<Arc<dyn HistoryCell>>,
+        keymap: PagerKeymap,
+        mode: TranscriptMode,
+    ) -> Self {
         Self {
             view: PagerView::new(
                 Self::render_cells(
@@ -508,7 +538,7 @@ impl TranscriptOverlay {
                     /*highlight_cell*/ None,
                     TranscriptHistoryState::Idle,
                 ),
-                "T R A N S C R I P T".to_string(),
+                mode.title().to_string(),
                 usize::MAX,
                 keymap,
             ),
@@ -517,7 +547,46 @@ impl TranscriptOverlay {
             live_tail_key: None,
             history_state: TranscriptHistoryState::Idle,
             is_done: false,
+            mode,
         }
+    }
+
+    pub(crate) fn is_workspace(&self) -> bool {
+        self.mode.is_workspace()
+    }
+
+    pub(crate) fn render_workspace(&mut self, area: Rect, buf: &mut Buffer) {
+        self.view.render(area, buf);
+    }
+
+    pub(crate) fn handle_workspace_key(
+        &mut self,
+        tui: &mut tui::Tui,
+        key_event: KeyEvent,
+    ) -> Result<bool> {
+        if !self.is_workspace() {
+            return Ok(false);
+        }
+        if self.view.keymap.close_transcript.is_pressed(key_event) {
+            self.is_done = true;
+            return Ok(true);
+        }
+        if self.workspace_navigation_key(key_event) {
+            self.view.handle_key_event(tui, key_event)?;
+            return Ok(true);
+        }
+        Ok(false)
+    }
+
+    fn workspace_navigation_key(&self, key_event: KeyEvent) -> bool {
+        self.view.keymap.page_up.is_pressed(key_event)
+            || self.view.keymap.page_down.is_pressed(key_event)
+    }
+
+    pub(crate) fn workspace_should_load_older(&self, key_event: KeyEvent) -> bool {
+        self.is_workspace()
+            && self.workspace_navigation_key(key_event)
+            && self.should_load_older(key_event)
     }
 
     pub(crate) fn set_history_state(

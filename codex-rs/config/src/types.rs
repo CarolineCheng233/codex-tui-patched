@@ -774,6 +774,11 @@ pub struct Tui {
     #[serde(default)]
     pub alternate_screen: AltScreenMode,
 
+    /// Use the interactive transcript workspace when opening the transcript.
+    /// Defaults to `false` so existing transcript behavior remains unchanged.
+    #[serde(default)]
+    pub transcript_workspace: bool,
+
     /// Ordered list of status line item identifiers.
     ///
     /// When set, the TUI renders the selected items as the status line.

@@ -570,6 +570,8 @@ pub(crate) struct App {
 
     // Pager overlay state (Transcript or Static like Diff)
     pub(crate) overlay: Option<Overlay>,
+    /// Ensures an enabled transcript workspace opens only once per app session.
+    pub(crate) transcript_workspace_opened: bool,
     pub(crate) deferred_history_lines: Vec<crate::terminal_hyperlinks::HyperlinkLine>,
     has_emitted_history_lines: bool,
     transcript_reflow: TranscriptReflowState,
@@ -900,6 +902,10 @@ impl App {
                 self.recap.note_focus_gained();
             }
             _ => {}
+        }
+
+        if matches!(&event, TuiEvent::Draw) {
+            self.maybe_open_transcript_workspace(tui);
         }
 
         if self.overlay.is_some() {

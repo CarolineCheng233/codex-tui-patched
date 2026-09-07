@@ -687,6 +687,7 @@ See the Codex keymap documentation for supported actions and examples."
             last_thread_usage_status_cell: None,
             pending_thread_usage_history_refresh: false,
             overlay: None,
+            transcript_workspace_opened: false,
             deferred_history_lines: Vec::new(),
             has_emitted_history_lines: false,
             transcript_reflow: TranscriptReflowState::default(),

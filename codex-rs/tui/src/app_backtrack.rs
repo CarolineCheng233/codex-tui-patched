@@ -22,6 +22,7 @@
 //! both committed history and in-flight activity without changing flush or coalescing behavior.
 
 mod legacy_input;
+mod workspace_input;
 
 use std::any::TypeId;
 use std::sync::Arc;
@@ -39,6 +40,8 @@ use crate::history_cell::SessionInfoCell;
 use crate::history_cell::UserHistoryCell;
 use crate::pager_overlay::Overlay;
 use crate::pager_overlay::TranscriptHistoryState;
+use crate::pager_overlay::TranscriptWorkspaceLayout;
+use crate::render::renderable::Renderable;
 use crate::tui;
 use crate::tui::TuiEvent;
 use codex_app_server_protocol::ThreadItem;
@@ -51,6 +54,8 @@ use color_eyre::eyre::bail;
 use crossterm::event::KeyCode;
 use crossterm::event::KeyEvent;
 use crossterm::event::KeyEventKind;
+use ratatui::widgets::Clear;
+use ratatui::widgets::Widget;
 
 const NO_PREVIOUS_MESSAGE_TO_EDIT: &str = "No previous message to edit.";
 pub(crate) const SIDE_EDIT_PREVIOUS_UNAVAILABLE_MESSAGE: &str =
@@ -95,6 +100,11 @@ impl App {
         app_server: &mut AppServerSession,
         event: TuiEvent,
     ) -> Result<bool> {
+        if self.transcript_workspace_active() && !self.backtrack.overlay_preview_active {
+            return self
+                .handle_transcript_workspace_event(tui, app_server, event)
+                .await;
+        }
         self.handle_legacy_transcript_event(tui, app_server, event)
     }
 
@@ -144,19 +154,44 @@ impl App {
         ));
     }
 
-    /// Open transcript overlay (enters alternate screen and shows full transcript).
+    /// Open the configured transcript presentation in the alternate screen.
     pub(crate) fn open_transcript_overlay(&mut self, tui: &mut tui::Tui) {
+        self.open_transcript_overlay_with_workspace(
+            tui,
+            self.local_settings.tui.transcript_workspace,
+        );
+    }
+
+    fn open_transcript_viewer(&mut self, tui: &mut tui::Tui) {
+        self.open_transcript_overlay_with_workspace(tui, /*workspace*/ false);
+    }
+
+    fn open_transcript_overlay_with_workspace(&mut self, tui: &mut tui::Tui, workspace: bool) {
         let _ = tui.enter_alt_screen();
-        self.overlay = Some(Overlay::new_transcript(
-            self.transcript_cells.clone(),
-            self.keymap.pager.clone(),
-        ));
+        self.transcript_workspace_opened |= workspace;
+        self.overlay = Some(if workspace {
+            Overlay::new_transcript_workspace(
+                self.transcript_cells.clone(),
+                self.keymap.pager.clone(),
+            )
+        } else {
+            Overlay::new_transcript(self.transcript_cells.clone(), self.keymap.pager.clone())
+        });
         if self.scrollback_has_older_history
             && let Some(Overlay::Transcript(overlay)) = self.overlay.as_mut()
         {
             overlay.set_history_state(TranscriptHistoryState::Partial);
         }
         tui.frame_requester().schedule_frame();
+    }
+
+    pub(crate) fn maybe_open_transcript_workspace(&mut self, tui: &mut tui::Tui) {
+        if self.local_settings.tui.transcript_workspace
+            && !self.transcript_workspace_opened
+            && self.overlay.is_none()
+        {
+            self.open_transcript_overlay(tui);
+        }
     }
 
     /// Close transcript overlay and restore normal UI.
@@ -204,7 +239,7 @@ impl App {
             return;
         }
 
-        self.open_transcript_overlay(tui);
+        self.open_transcript_viewer(tui);
         self.backtrack.overlay_preview_active = true;
         // Composer is hidden by overlay; clear its hint.
         self.chat_widget.clear_esc_backtrack_hint();
@@ -313,10 +348,28 @@ impl App {
             let chat_widget = &self.chat_widget;
             tui.draw(u16::MAX, |frame| {
                 let width = frame.area().width.max(1);
-                t.sync_live_tail(width, active_key, |w| {
-                    chat_widget.active_cell_transcript_hyperlink_lines(w)
-                });
-                t.render(frame.area(), frame.buffer);
+                if t.is_workspace() {
+                    let composer = chat_widget.transcript_workspace_bottom_pane();
+                    let layout = TranscriptWorkspaceLayout::new(
+                        frame.area(),
+                        composer.desired_height(width),
+                    );
+                    t.sync_live_tail(layout.transcript.width.max(1), active_key, |w| {
+                        chat_widget.active_cell_transcript_hyperlink_lines(w)
+                    });
+                    t.render_workspace(layout.transcript, frame.buffer);
+                    Clear.render(layout.composer, frame.buffer);
+                    composer.render(layout.composer, frame.buffer);
+                    if let Some((x, y)) = composer.cursor_pos(layout.composer) {
+                        frame.set_cursor_style(composer.cursor_style(layout.composer));
+                        frame.set_cursor_position((x, y));
+                    }
+                } else {
+                    t.sync_live_tail(width, active_key, |w| {
+                        chat_widget.active_cell_transcript_hyperlink_lines(w)
+                    });
+                    t.render(frame.area(), frame.buffer);
+                }
             })?;
             let close_overlay = t.is_done();
             if !close_overlay
@@ -341,6 +394,13 @@ impl App {
             }
         }
         Ok(())
+    }
+
+    pub(super) fn transcript_workspace_active(&self) -> bool {
+        matches!(
+            &self.overlay,
+            Some(Overlay::Transcript(overlay)) if overlay.is_workspace()
+        )
     }
 
     /// Handle Enter in overlay backtrack preview: confirm selection and reset state.

@@ -3,10 +3,14 @@
 //! The default-off feature must leave the existing viewer and its draft intact.
 
 use super::*;
+use crate::pager_overlay::TranscriptWorkspaceLayout;
+use crate::render::renderable::Renderable;
 use crossterm::event::KeyCode;
 use crossterm::event::KeyEvent;
 use crossterm::event::KeyModifiers;
 use pretty_assertions::assert_eq;
+use ratatui::widgets::Clear;
+use ratatui::widgets::Widget;
 
 async fn press_key(
     app: &mut App,
@@ -105,5 +109,133 @@ async fn transcript_flag_off_preserves_viewer_and_backtracking() -> Result<()> {
             }
         ))
     );
+    Ok(())
+}
+
+#[tokio::test]
+async fn transcript_workspace_routes_typing_and_ctrl_c_to_the_existing_composer() -> Result<()> {
+    let (mut app, _app_event_rx, _op_rx) = make_test_app_with_channels().await;
+    app.local_settings.tui.transcript_workspace = true;
+    let mut app_server = start_config_write_test_app_server(&app).await?;
+    let mut tui = crate::tui::test_support::make_test_tui()?;
+    let session = test_thread_session(ThreadId::new(), app.config.cwd.to_path_buf());
+    app.chat_widget.handle_thread_session(session);
+    app.transcript_cells = ["first", "second"]
+        .map(|message| {
+            Arc::new(UserHistoryCell {
+                message: message.into(),
+                text_elements: Vec::new(),
+                local_image_paths: Vec::new(),
+                remote_image_urls: Vec::new(),
+            }) as Arc<dyn HistoryCell>
+        })
+        .to_vec();
+
+    app.open_transcript_overlay(&mut tui);
+    assert!(matches!(
+        &app.overlay,
+        Some(Overlay::Transcript(overlay)) if overlay.is_workspace()
+    ));
+
+    app.handle_tui_event(
+        &mut tui,
+        &mut app_server,
+        TuiEvent::Paste("workspace draft".into()),
+    )
+    .await?;
+    assert_eq!(
+        app.chat_widget.composer_text_with_pending(),
+        "workspace draft"
+    );
+
+    let text = {
+        let area = Rect::new(
+            /*x*/ 0, /*y*/ 0, /*width*/ 72, /*height*/ 12,
+        );
+        let composer = app.chat_widget.transcript_workspace_bottom_pane();
+        let layout = TranscriptWorkspaceLayout::new(area, composer.desired_height(area.width));
+        let mut buffer = ratatui::buffer::Buffer::empty(area);
+        let Some(Overlay::Transcript(overlay)) = &mut app.overlay else {
+            panic!("workspace closed")
+        };
+        overlay.render_workspace(layout.transcript, &mut buffer);
+        Clear.render(layout.composer, &mut buffer);
+        composer.render(layout.composer, &mut buffer);
+        buffer
+            .content()
+            .chunks(usize::from(area.width))
+            .map(|row| {
+                row.iter()
+                    .map(ratatui::buffer::Cell::symbol)
+                    .collect::<String>()
+                    .trim_end()
+                    .to_string()
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+    insta::assert_snapshot!("transcript_workspace_composer_bottom", text);
+
+    app.handle_tui_event(
+        &mut tui,
+        &mut app_server,
+        TuiEvent::Key(KeyEvent::new(KeyCode::PageUp, KeyModifiers::NONE)),
+    )
+    .await?;
+    assert_eq!(
+        app.chat_widget.composer_text_with_pending(),
+        "workspace draft"
+    );
+
+    app.handle_tui_event(
+        &mut tui,
+        &mut app_server,
+        TuiEvent::Key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL)),
+    )
+    .await?;
+    assert!(app.chat_widget.composer_is_empty());
+    assert!(app.overlay.is_some());
+
+    app.handle_tui_event(
+        &mut tui,
+        &mut app_server,
+        TuiEvent::Paste("cleared by ctrl-u".into()),
+    )
+    .await?;
+    app.handle_tui_event(
+        &mut tui,
+        &mut app_server,
+        TuiEvent::Key(KeyEvent::new(KeyCode::Char('u'), KeyModifiers::CONTROL)),
+    )
+    .await?;
+    assert!(app.chat_widget.composer_is_empty());
+    assert!(app.transcript_workspace_active());
+
+    app.handle_tui_event(
+        &mut tui,
+        &mut app_server,
+        TuiEvent::Key(KeyEvent::new(KeyCode::Char('t'), KeyModifiers::CONTROL)),
+    )
+    .await?;
+    assert!(app.overlay.is_none());
+    app_server.shutdown().await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn enabled_transcript_workspace_opens_on_the_first_draw() -> Result<()> {
+    let (mut app, _app_event_rx, _op_rx) = make_test_app_with_channels().await;
+    app.local_settings.tui.transcript_workspace = true;
+    let mut app_server = start_config_write_test_app_server(&app).await?;
+    let mut tui = crate::tui::test_support::make_test_tui()?;
+
+    app.handle_tui_event(&mut tui, &mut app_server, TuiEvent::Draw)
+        .await?;
+
+    assert!(matches!(
+        &app.overlay,
+        Some(Overlay::Transcript(overlay)) if overlay.is_workspace()
+    ));
+    app_server.shutdown().await?;
     Ok(())
 }

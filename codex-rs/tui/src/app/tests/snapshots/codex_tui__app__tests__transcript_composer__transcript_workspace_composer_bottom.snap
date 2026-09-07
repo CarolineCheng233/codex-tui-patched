@@ -1,0 +1,17 @@
+---
+source: tui/src/app/tests/transcript_composer.rs
+assertion_line: 175
+expression: text
+---
+/ T R A N S C R I P T  ·  PgUp/PgDn scroll  ·  Ctrl+T close / / / / / /
+› first
+
+
+
+› second
+
+───────────────────────────────────────────────────────────────── 100% ─
+
+› workspace draft
+
+  gpt-test default · /tmp/project

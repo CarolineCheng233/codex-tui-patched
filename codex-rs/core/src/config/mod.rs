@@ -770,6 +770,8 @@ pub struct Config {
     /// - `always`: Always use alternate screen.
     /// - `never`: Never use alternate screen (inline mode, preserves scrollback).
     pub tui_alternate_screen: AltScreenMode,
+    /// Open Ctrl+T as an interactive fixed-composer transcript workspace.
+    pub tui_transcript_workspace: bool,
     /// Ordered list of status line item identifiers for the TUI.
     ///
     /// When unset, the TUI defaults to: `model-with-reasoning` and `current-dir`.
@@ -4376,6 +4378,11 @@ impl Config {
                 .as_ref()
                 .map(|t| t.alternate_screen)
                 .unwrap_or_default(),
+            tui_transcript_workspace: cfg
+                .tui
+                .as_ref()
+                .map(|t| t.transcript_workspace)
+                .unwrap_or(false),
             tui_status_line: cfg.tui.as_ref().and_then(|t| t.status_line.clone()),
             tui_status_line_use_colors: cfg
                 .tui

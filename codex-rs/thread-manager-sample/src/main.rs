@@ -230,6 +230,7 @@ fn new_config(model: Option<String>, arg0_paths: Arg0DispatchPaths) -> anyhow::R
         tui_auto_recap: true,
         model_availability_nux: ModelAvailabilityNuxConfig::default(),
         tui_alternate_screen: AltScreenMode::Auto,
+        tui_transcript_workspace: false,
         tui_status_line: None,
         tui_status_line_use_colors: true,
         tui_terminal_title: None,
