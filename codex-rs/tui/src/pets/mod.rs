@@ -13,6 +13,7 @@
 //! persistence or popup orchestration; callers must persist the final selection
 //! only after the load succeeds.
 
+use std::collections::BTreeMap;
 use std::io::Write;
 
 mod ambient;
@@ -53,6 +54,14 @@ pub(crate) use preview::PetPickerPreviewState;
 
 pub(crate) const DEFAULT_PET_ID: &str = "codex";
 pub(crate) const DISABLED_PET_ID: &str = "disabled";
+
+/// iTerm2 3.6+ supports Kitty's local-file transport without loading image bytes into Codex.
+pub(crate) fn local_file_image_previews_supported() -> bool {
+    matches!(
+        image_protocol::detect_pet_image_support(),
+        PetImageSupport::Supported(image_protocol::ImageProtocol::KittyLocalFile)
+    )
+}
 
 /// Ensure that a selected built-in pet has a locally cached spritesheet.
 ///
@@ -142,6 +151,77 @@ pub(crate) fn render_pet_picker_preview_image(
 pub(crate) struct PetImageRenderState {
     last_sixel_clear_area: Option<SixelClearArea>,
     last_protocol: Option<image_protocol::ImageProtocol>,
+}
+
+/// A local-file image placement owned by the transcript workspace.
+///
+/// The path is intentionally the only image payload retained by the TUI. iTerm2's Kitty
+/// compatibility protocol reads the file itself, so image bytes are neither decoded nor cached.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct LocalImagePreviewDraw {
+    pub(crate) image_id: u32,
+    pub(crate) path: std::path::PathBuf,
+    pub(crate) x: u16,
+    pub(crate) y: u16,
+    pub(crate) columns: u16,
+    pub(crate) rows: u16,
+}
+
+#[derive(Debug, Default)]
+pub(crate) struct LocalImagePreviewState {
+    rendered: BTreeMap<u32, LocalImagePreviewDraw>,
+}
+
+/// Render only changed local-file previews and delete placements no longer visible.
+pub(crate) fn render_local_image_previews(
+    writer: &mut impl Write,
+    state: &mut LocalImagePreviewState,
+    requests: &[LocalImagePreviewDraw],
+) -> std::result::Result<(), PetImageRenderError> {
+    use crossterm::cursor::MoveTo;
+    use crossterm::cursor::RestorePosition;
+    use crossterm::cursor::SavePosition;
+    use crossterm::queue;
+
+    let requested = requests
+        .iter()
+        .cloned()
+        .map(|request| (request.image_id, request))
+        .collect::<BTreeMap<_, _>>();
+
+    for image_id in state.rendered.keys().copied() {
+        if !requested.contains_key(&image_id) {
+            write!(writer, "{}", image_protocol::kitty_delete_image(image_id))?;
+        }
+    }
+
+    for request in requests {
+        if state.rendered.get(&request.image_id) == Some(request) {
+            continue;
+        }
+        if state.rendered.contains_key(&request.image_id) {
+            write!(
+                writer,
+                "{}",
+                image_protocol::kitty_delete_image(request.image_id)
+            )?;
+        }
+        let payload = image_protocol::kitty_transmit_png_file_with_id(
+            &request.path,
+            request.columns,
+            request.rows,
+            Some(request.image_id),
+        )
+        .map_err(PetImageRenderError::Asset)?;
+        queue!(writer, SavePosition)?;
+        queue!(writer, MoveTo(request.x, request.y))?;
+        write!(writer, "{payload}")?;
+        queue!(writer, RestorePosition)?;
+    }
+
+    writer.flush()?;
+    state.rendered = requested;
+    Ok(())
 }
 
 fn render_pet_image(
@@ -371,6 +451,33 @@ mod tests {
         assert!(output.contains("a=T,t=f,f=100,c=4,r=2,q=2,i=49374;"));
         assert!(!output.contains("cG5n"));
         assert!(output.contains("\x1b8"));
+    }
+
+    #[test]
+    fn local_input_preview_references_the_file_and_skips_unchanged_requests() {
+        let dir = tempfile::tempdir().unwrap();
+        let frame = dir.path().join("input.png");
+        std::fs::write(&frame, b"png").unwrap();
+        let request = LocalImagePreviewDraw {
+            image_id: 0xC100_0000,
+            path: frame,
+            x: 2,
+            y: 3,
+            columns: 16,
+            rows: 6,
+        };
+        let mut output = Vec::new();
+        let mut state = LocalImagePreviewState::default();
+
+        render_local_image_previews(&mut output, &mut state, &[request.clone()]).unwrap();
+
+        let first = String::from_utf8(output.clone()).unwrap();
+        assert!(first.contains("a=T,t=f,f=100,c=16,r=6,q=2,i=3238002688;"));
+        assert!(!first.contains("cG5n"));
+
+        output.clear();
+        render_local_image_previews(&mut output, &mut state, &[request]).unwrap();
+        assert!(output.is_empty());
     }
 
     #[test]

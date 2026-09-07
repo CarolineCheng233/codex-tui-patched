@@ -177,6 +177,12 @@ impl App {
         } else {
             Overlay::new_transcript(self.transcript_cells.clone(), self.keymap.pager.clone())
         });
+        if workspace
+            && crate::pets::local_file_image_previews_supported()
+            && let Some(Overlay::Transcript(overlay)) = self.overlay.as_mut()
+        {
+            overlay.set_local_image_previews_enabled(true);
+        }
         if self.scrollback_has_older_history
             && let Some(Overlay::Transcript(overlay)) = self.overlay.as_mut()
         {
@@ -196,6 +202,9 @@ impl App {
 
     /// Close transcript overlay and restore normal UI.
     pub(crate) fn close_transcript_overlay(&mut self, tui: &mut tui::Tui) {
+        if let Err(err) = tui.draw_local_image_previews(&[]) {
+            tracing::debug!(error = %err, "failed to clear transcript image previews");
+        }
         let _ = tui.leave_alt_screen();
         let was_backtrack = self.backtrack.overlay_preview_active;
         if !self.deferred_history_lines.is_empty() {
@@ -346,6 +355,7 @@ impl App {
         {
             let active_key = self.chat_widget.active_cell_transcript_key();
             let chat_widget = &self.chat_widget;
+            let mut local_image_previews = Vec::new();
             tui.draw(u16::MAX, |frame| {
                 let width = frame.area().width.max(1);
                 if t.is_workspace() {
@@ -358,6 +368,7 @@ impl App {
                         chat_widget.active_cell_transcript_hyperlink_lines(w)
                     });
                     t.render_workspace(layout.transcript, frame.buffer);
+                    local_image_previews = t.workspace_local_image_previews(layout.transcript);
                     Clear.render(layout.composer, frame.buffer);
                     composer.render(layout.composer, frame.buffer);
                     if let Some((x, y)) = composer.cursor_pos(layout.composer) {
@@ -371,6 +382,9 @@ impl App {
                     t.render(frame.area(), frame.buffer);
                 }
             })?;
+            if let Err(err) = tui.draw_local_image_previews(&local_image_previews) {
+                tracing::debug!(error = %err, "failed to render transcript image previews");
+            }
             let close_overlay = t.is_done();
             if !close_overlay
                 && active_key.is_some_and(|key| key.animation_tick.is_some())

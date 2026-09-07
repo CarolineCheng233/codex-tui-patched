@@ -32,6 +32,7 @@ use std::sync::Arc;
 use crate::chatwidget::ActiveCellTranscriptKey;
 use crate::history_cell::HistoryCell;
 use crate::history_cell::SessionInfoCell;
+use crate::history_cell::UserHistoryCell;
 use crate::key_hint;
 use crate::key_hint::KeyBinding;
 use crate::key_hint::KeyBindingListExt;
@@ -59,6 +60,8 @@ use ratatui::widgets::Wrap;
 use scrolling::CellRenderable;
 use scrolling::HyperlinkLinesRenderable;
 use scrolling::render_offset_content;
+use transcript_workspace::LOCAL_IMAGE_PREVIEW_COLUMNS;
+use transcript_workspace::LOCAL_IMAGE_PREVIEW_ROWS;
 use transcript_workspace::TranscriptMode;
 use transcript_workspace::TranscriptTurnState;
 pub(crate) use transcript_workspace::TranscriptWorkspaceLayout;
@@ -496,6 +499,7 @@ pub(crate) struct TranscriptOverlay {
     is_done: bool,
     mode: TranscriptMode,
     workspace_turns: TranscriptTurnState,
+    local_image_previews_enabled: bool,
 }
 
 /// Cache key for the active-cell "live tail" appended to the transcript overlay.
@@ -546,6 +550,7 @@ impl TranscriptOverlay {
                     /*highlight_cell*/ None,
                     TranscriptHistoryState::Idle,
                     &workspace_turns,
+                    /*local_image_previews_enabled*/ false,
                 ),
                 mode.title().to_string(),
                 usize::MAX,
@@ -559,11 +564,21 @@ impl TranscriptOverlay {
             is_done: false,
             mode,
             workspace_turns,
+            local_image_previews_enabled: false,
         }
     }
 
     pub(crate) fn is_workspace(&self) -> bool {
         self.mode.is_workspace()
+    }
+
+    pub(crate) fn set_local_image_previews_enabled(&mut self, enabled: bool) {
+        if self.local_image_previews_enabled == enabled {
+            return;
+        }
+        self.local_image_previews_enabled = enabled;
+        let live_tail = self.take_live_tail_renderable();
+        self.rebuild_renderables(live_tail);
     }
 
     pub(crate) fn render_workspace(&mut self, area: Rect, buf: &mut Buffer) {
@@ -651,6 +666,7 @@ impl TranscriptOverlay {
         highlight_cell: Option<usize>,
         history_state: TranscriptHistoryState,
         workspace_turns: &TranscriptTurnState,
+        local_image_previews_enabled: bool,
     ) -> Vec<Box<dyn Renderable>> {
         let highlighted_cell = workspace_turns.selected_turn_start().or(highlight_cell);
         let mut renderables = Vec::with_capacity(cells.len());
@@ -663,6 +679,12 @@ impl TranscriptOverlay {
                 index,
                 highlighted_cell,
                 history_state,
+                Self::image_preview_rows(
+                    cell,
+                    index,
+                    workspace_turns,
+                    local_image_previews_enabled,
+                ),
             ));
             if workspace_turns.is_collapsed(index) {
                 let hidden_cells = workspace_turns.hidden_cell_count_after(index, cells);
@@ -680,6 +702,7 @@ impl TranscriptOverlay {
         index: usize,
         highlight_cell: Option<usize>,
         history_state: TranscriptHistoryState,
+        image_preview_rows: u16,
     ) -> Box<dyn Renderable> {
         if cell.as_any().is::<SessionInfoCell>()
             && let Some(placeholder) = history_state.session_header_placeholder()
@@ -703,7 +726,30 @@ impl TranscriptOverlay {
                 ),
             ));
         }
+        if image_preview_rows > 0 {
+            cell_renderable = Box::new(ReservedBottomRenderable {
+                renderable: cell_renderable,
+                rows: image_preview_rows,
+            });
+        }
         cell_renderable
+    }
+
+    fn image_preview_rows(
+        cell: &Arc<dyn HistoryCell>,
+        index: usize,
+        workspace_turns: &TranscriptTurnState,
+        enabled: bool,
+    ) -> u16 {
+        if !enabled || workspace_turns.is_collapsed(index) {
+            return 0;
+        }
+        cell.as_any()
+            .downcast_ref::<UserHistoryCell>()
+            .map_or(0, |cell| {
+                LOCAL_IMAGE_PREVIEW_ROWS
+                    .saturating_mul(u16::try_from(cell.local_image_paths.len()).unwrap_or(u16::MAX))
+            })
     }
 
     /// Insert a committed history cell while keeping any cached live tail.
@@ -726,6 +772,7 @@ impl TranscriptOverlay {
                 self.cells.len(),
                 self.highlight_cell,
                 self.history_state,
+                /*image_preview_rows*/ 0,
             );
             self.cells.push(cell);
             self.view.renderables.push(cell_renderable);
@@ -953,6 +1000,7 @@ impl TranscriptOverlay {
                             index,
                             self.highlight_cell,
                             self.history_state,
+                            /*image_preview_rows*/ 0,
                         );
                     }
                 }
@@ -978,6 +1026,7 @@ impl TranscriptOverlay {
             self.highlight_cell,
             self.history_state,
             &self.workspace_turns,
+            self.local_image_previews_enabled,
         );
         if let Some(tail) = tail_renderable {
             self.view.renderables.push(tail);
@@ -1010,6 +1059,80 @@ impl TranscriptOverlay {
             }
         }
         None
+    }
+
+    pub(crate) fn workspace_local_image_previews(
+        &self,
+        area: Rect,
+    ) -> Vec<crate::pets::LocalImagePreviewDraw> {
+        if !self.is_workspace() || !self.local_image_previews_enabled {
+            return Vec::new();
+        }
+        let content = self.view.content_area(area);
+        let columns = content
+            .width
+            .saturating_sub(/*left and right gutter*/ 4)
+            .min(LOCAL_IMAGE_PREVIEW_COLUMNS);
+        if columns == 0 || content.height < LOCAL_IMAGE_PREVIEW_ROWS {
+            return Vec::new();
+        }
+
+        let mut top = -(self.view.scroll_offset as isize);
+        let mut previews = Vec::new();
+        for (index, cell) in self.cells.iter().enumerate() {
+            if self.workspace_turns.is_cell_hidden(index) {
+                continue;
+            }
+            let base_height = Self::render_cell(
+                cell,
+                index,
+                self.workspace_turns
+                    .selected_turn_start()
+                    .or(self.highlight_cell),
+                self.history_state,
+                /*image_preview_rows*/ 0,
+            )
+            .desired_height(content.width) as isize;
+            let preview_rows = Self::image_preview_rows(
+                cell,
+                index,
+                &self.workspace_turns,
+                self.local_image_previews_enabled,
+            );
+            if preview_rows > 0
+                && let Some(user_cell) = cell.as_any().downcast_ref::<UserHistoryCell>()
+            {
+                for (image_index, path) in user_cell.local_image_paths.iter().enumerate() {
+                    if !path.is_file() {
+                        continue;
+                    }
+                    let image_top = content.y as isize
+                        + top
+                        + base_height
+                        + (image_index.saturating_mul(usize::from(LOCAL_IMAGE_PREVIEW_ROWS))
+                            as isize);
+                    let image_bottom = image_top.saturating_add(LOCAL_IMAGE_PREVIEW_ROWS as isize);
+                    if image_top >= content.y as isize && image_bottom <= content.bottom() as isize
+                    {
+                        previews.push(crate::pets::LocalImagePreviewDraw {
+                            image_id: 0xC100_0000u32
+                                .saturating_add((index as u32).saturating_mul(16))
+                                .saturating_add(image_index as u32),
+                            path: path.clone(),
+                            x: content.x.saturating_add(2),
+                            y: image_top as u16,
+                            columns,
+                            rows: LOCAL_IMAGE_PREVIEW_ROWS,
+                        });
+                    }
+                }
+            }
+            top = top.saturating_add(base_height + preview_rows as isize);
+            if self.workspace_turns.is_collapsed(index) {
+                top = top.saturating_add(1);
+            }
+        }
+        previews
     }
 
     /// Removes and returns the cached live-tail renderable, if present.
@@ -1104,6 +1227,46 @@ impl TranscriptOverlay {
             /*height*/ 1,
         );
         Span::from(label).dim().render(status_area, buf);
+    }
+}
+
+/// Reserves blank rows for a terminal graphic while preserving viewport-aware cell rendering.
+struct ReservedBottomRenderable {
+    renderable: Box<dyn Renderable>,
+    rows: u16,
+}
+
+impl Renderable for ReservedBottomRenderable {
+    fn render(&self, area: Rect, buf: &mut Buffer) {
+        let content_height = self.renderable.desired_height(area.width);
+        self.renderable.render(
+            Rect::new(area.x, area.y, area.width, area.height.min(content_height)),
+            buf,
+        );
+    }
+
+    fn render_scrolled(&self, area: Rect, buf: &mut Buffer, scroll_offset: u16) -> bool {
+        let content_height = self.renderable.desired_height(area.width);
+        if scroll_offset >= content_height {
+            return true;
+        }
+        self.renderable.render_scrolled(
+            Rect::new(
+                area.x,
+                area.y,
+                area.width,
+                area.height
+                    .min(content_height.saturating_sub(scroll_offset)),
+            ),
+            buf,
+            scroll_offset,
+        )
+    }
+
+    fn desired_height(&self, width: u16) -> u16 {
+        self.renderable
+            .desired_height(width)
+            .saturating_add(self.rows)
     }
 }
 

@@ -139,3 +139,28 @@ async fn workspace_turn_keys_select_collapse_and_expand_a_whole_turn() -> std::i
     assert!(!overlay.workspace_turns.is_collapsed(0));
     Ok(())
 }
+
+#[test]
+fn workspace_places_local_input_images_in_reserved_user_rows() {
+    let dir = tempfile::tempdir().expect("temp directory");
+    let path = dir.path().join("input-image.png");
+    std::fs::write(&path, b"png").expect("test image");
+    let cells = vec![Arc::new(UserHistoryCell {
+        message: "[Image #1]".into(),
+        text_elements: Vec::new(),
+        local_image_paths: vec![path.clone()],
+        remote_image_urls: Vec::new(),
+    }) as Arc<dyn crate::history_cell::HistoryCell>];
+    let mut overlay =
+        TranscriptOverlay::new_workspace(cells, crate::keymap::RuntimeKeymap::defaults().pager);
+    overlay.set_local_image_previews_enabled(true);
+    overlay.view.scroll_offset = 0;
+
+    let previews = overlay.workspace_local_image_previews(Rect::new(0, 0, 80, 30));
+
+    assert_eq!(previews.len(), 1);
+    assert_eq!(previews[0].path, path);
+    assert_eq!(previews[0].columns, 32);
+    assert_eq!(previews[0].rows, 8);
+    assert!(previews[0].y > 0);
+}

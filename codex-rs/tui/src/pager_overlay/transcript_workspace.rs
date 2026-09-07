@@ -6,6 +6,9 @@ use ratatui::layout::Rect;
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
+pub(super) const LOCAL_IMAGE_PREVIEW_COLUMNS: u16 = 32;
+pub(super) const LOCAL_IMAGE_PREVIEW_ROWS: u16 = 8;
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum TranscriptMode {
     Viewer,

@@ -108,6 +108,9 @@ impl Drop for Tui {
         if let Err(err) = self.clear_ambient_pet_image() {
             tracing::debug!(error = %err, "failed to clear ambient pet image on TUI drop");
         }
+        if let Err(err) = self.clear_local_image_previews() {
+            tracing::debug!(error = %err, "failed to clear local image previews on TUI drop");
+        }
     }
 }
 
@@ -591,6 +594,7 @@ pub struct Tui {
     screen_size: ScreenSizePolicy,
     ambient_pet_image_state: crate::pets::PetImageRenderState,
     pet_picker_preview_image_state: crate::pets::PetImageRenderState,
+    local_image_preview_state: crate::pets::LocalImagePreviewState,
     alt_saved_viewport: Option<ratatui::layout::Rect>,
     #[cfg(unix)]
     suspend_context: SuspendContext,
@@ -648,6 +652,7 @@ impl Tui {
             screen_size: ScreenSizePolicy::default(),
             ambient_pet_image_state: crate::pets::PetImageRenderState::default(),
             pet_picker_preview_image_state: crate::pets::PetImageRenderState::default(),
+            local_image_preview_state: crate::pets::LocalImagePreviewState::default(),
             alt_saved_viewport: None,
             #[cfg(unix)]
             suspend_context: SuspendContext::new(),
@@ -1103,6 +1108,36 @@ impl Tui {
             self.terminal.backend_mut(),
             &mut self.ambient_pet_image_state,
             /*request*/ None,
+        )
+    }
+
+    pub(crate) fn draw_local_image_previews(
+        &mut self,
+        requests: &[crate::pets::LocalImagePreviewDraw],
+    ) -> std::result::Result<(), crate::pets::PetImageRenderError> {
+        if let Err(err) = ensure_virtual_terminal_processing() {
+            return Err(crate::pets::PetImageRenderError::Terminal(err));
+        }
+
+        let terminal = &mut self.terminal;
+        let state = &mut self.local_image_preview_state;
+        stdout().sync_update(|_| {
+            match crate::pets::render_local_image_previews(terminal.backend_mut(), state, requests)
+            {
+                Ok(()) => Ok(Ok(())),
+                Err(crate::pets::PetImageRenderError::Terminal(err)) => Err(err),
+                Err(err @ crate::pets::PetImageRenderError::Asset(_)) => Ok(Err(err)),
+            }
+        })??
+    }
+
+    fn clear_local_image_previews(
+        &mut self,
+    ) -> std::result::Result<(), crate::pets::PetImageRenderError> {
+        crate::pets::render_local_image_previews(
+            self.terminal.backend_mut(),
+            &mut self.local_image_preview_state,
+            &[],
         )
     }
 
