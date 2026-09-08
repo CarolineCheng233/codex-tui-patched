@@ -77,6 +77,52 @@ async fn resumed_initial_messages_render_history() {
 }
 
 #[tokio::test]
+async fn resumed_workspace_skill_command_requests_the_catalog() {
+    let (mut chat, _rx, mut op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+    let command = vec![
+        "zsh".to_string(),
+        "-lc".to_string(),
+        "pwd && sed -n '1,240p' /tmp/enabled-skill/SKILL.md".to_string(),
+    ];
+    let command_actions = codex_shell_command::parse_command::parse_command(&command)
+        .into_iter()
+        .map(|parsed| AppServerCommandAction::from_core_with_cwd(parsed, &chat.config.cwd))
+        .collect();
+
+    chat.replay_thread_turns(
+        vec![AppServerTurn {
+            items: vec![AppServerThreadItem::CommandExecution {
+                id: "resumed-workspace-skill".to_string(),
+                command: codex_shell_command::parse_command::shlex_join(&command),
+                cwd: chat.config.cwd.clone().into(),
+                process_id: None,
+                plugin_id: None,
+                script_path: None,
+                source: ExecCommandSource::Agent,
+                status: AppServerCommandExecutionStatus::Completed,
+                command_actions,
+                aggregated_output: Some("WORKSPACE_SKILL_BODY_SENTINEL\n".to_string()),
+                exit_code: Some(0),
+                duration_ms: Some(1),
+            }],
+            ..app_server_turn(
+                "resumed-workspace-skill-turn",
+                AppServerTurnStatus::Completed,
+                /*duration_ms*/ Some(1),
+                /*error*/ None,
+            )
+        }],
+        ReplayKind::ResumeInitialMessages,
+    );
+
+    let Op::ListSkills { cwds, force_reload } = op_rx.try_recv().expect("skills refresh") else {
+        panic!("expected ListSkills");
+    };
+    assert_eq!(cwds, vec![chat.config.cwd.to_path_buf()]);
+    assert!(!force_reload);
+}
+
+#[tokio::test]
 async fn replayed_failed_turns_preserve_overload_warnings_between_retries() {
     let (mut chat, mut rx, _ops) = make_chatwidget_manual(/*model_override*/ None).await;
     let prompt = "The workspace also looks super confusing with its separator.";
