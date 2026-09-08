@@ -74,11 +74,6 @@ impl App {
                 self.continue_misalignment(app_server, review).await;
             }
             AppEvent::CloseMisalignmentReview => self.chat_widget.show_misalignment_policy_precaution(),
-            AppEvent::SkillsListLoaded { ref cwd, .. }
-                if cwds_differ(cwd, self.config.cwd.as_path()) =>
-            {
-                self.skill_load_warnings.startup_complete = true;
-            }
             AppEvent::PluginMentionsLoaded { ref cwd, .. }
                 if cwds_differ(cwd, self.config.cwd.as_path()) => {}
             AppEvent::NewSession { name } => {
@@ -1242,9 +1237,15 @@ impl App {
             } => {
                 self.handle_mcp_inventory_result(result, detail, thread_id);
             }
-            AppEvent::SkillsListLoaded { result, ticket, .. } => {
+            AppEvent::SkillsListLoaded {
+                cwd,
+                result,
+                ticket,
+            } => {
                 let result = result.map_err(|err| color_eyre::eyre::eyre!(err));
-                if ticket.is_empty() {
+                if ticket.is_empty() && cwds_differ(&cwd, self.config.cwd.as_path()) {
+                    self.skill_load_warnings.startup_complete = true;
+                } else if ticket.is_empty() {
                     self.handle_skills_list_result(result, "failed to load skills on startup");
                 } else {
                     self.handle_skills_list_result_if_current(

@@ -54,18 +54,16 @@ impl WorkspaceSkillReadPresentation {
     }
 
     pub(crate) fn begin_catalog_refresh_if_needed(&self) -> Option<std::path::PathBuf> {
+        let cwd = self.candidate.cwd.to_abs_path().ok()?.to_path_buf();
         self.catalog
             .begin_refresh_if_unrequested(&self.candidate.cwd)
-            .then(|| self.candidate.cwd.to_abs_path().ok())
-            .flatten()
-            .map(|cwd| cwd.to_path_buf())
+            .then_some(cwd)
     }
 }
 
 #[derive(Clone, Debug)]
 struct WorkspaceSkillRoot {
     document: PathUri,
-    root: PathUri,
     name: String,
 }
 
@@ -229,10 +227,7 @@ impl WorkspaceSkillCatalog {
         };
         let root = roots
             .iter()
-            .filter(|root| {
-                candidate.document == root.document || candidate.document.starts_with(&root.root)
-            })
-            .max_by_key(|root| root.root.lexical_depth().unwrap_or_default())?;
+            .find(|root| candidate.document == root.document)?;
         Some(WorkspaceReadSummary {
             name: format!("{} ({} skill)", candidate.filename, root.name),
         })
@@ -258,20 +253,18 @@ impl WorkspaceSkillCatalog {
             .iter()
             .filter(|skill| skill.enabled)
             .map(WorkspaceSkillRoot::from_skill)
-            .collect::<Option<Vec<_>>>();
-        roots.map_or(WorkspaceCatalogState::Failed, WorkspaceCatalogState::Ready)
+            .collect();
+        WorkspaceCatalogState::Ready(roots)
     }
 }
 
 impl WorkspaceSkillRoot {
-    fn from_skill(skill: &SkillMetadata) -> Option<Self> {
+    fn from_skill(skill: &SkillMetadata) -> Self {
         let document = PathUri::from_abs_path(&skill.path);
-        let root = document.parent()?;
-        Some(Self {
+        Self {
             document,
-            root,
             name: skill.name.clone(),
-        })
+        }
     }
 }
 
@@ -316,7 +309,8 @@ pub(crate) fn classify_workspace_skill_read(
             .is_some_and(|path| path == document)
     };
 
-    let direct_read = parsed_read_matches(parsed);
+    let direct_read =
+        parsed_read_matches(parsed) && is_compactable_skill_read_argv(command, &cwd, &document);
     let shell_read =
         codex_shell_command::bash::parse_shell_lc_two_plain_commands_joined_by_and(command)
             .is_some_and(|(left, right)| {
@@ -324,6 +318,7 @@ pub(crate) fn classify_workspace_skill_read(
                     && parsed_read_matches(&codex_shell_command::parse_command::parse_command(
                         &right,
                     ))
+                    && is_compactable_skill_read_argv(&right, &cwd, &document)
             });
     if !direct_read && !shell_read {
         return None;
@@ -338,6 +333,17 @@ pub(crate) fn classify_workspace_skill_read(
         outcome: WorkspaceCommandOutcome::Pending,
         catalog,
     })
+}
+
+fn is_compactable_skill_read_argv(command: &[String], cwd: &PathUri, document: &PathUri) -> bool {
+    let path = match command {
+        [program, path] if program == "cat" => path,
+        [program, flag, range, path] if program == "sed" && flag == "-n" && range == "1,240p" => {
+            path
+        }
+        _ => return false,
+    };
+    cwd.join(path).is_ok_and(|path| path == *document)
 }
 
 pub(crate) fn completion_outcome(

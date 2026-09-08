@@ -197,7 +197,7 @@ workspace_transcript_*    → 仅 Compact 时复用官方 Read 摘要并省略�
 Catalog 要求：
 
 - 按 cwd 保存 `{ generation, Unrequested | Loading | Ready | Failed }`。缺少 key 与显式 `Unrequested` 语义相同；`begin_refresh(cwds)` 必须为每一个确切 cwd 递增 generation，并返回不可伪造的 `RefreshTicket { cwd, generation }`；
-- `Ready` 只保存 `enabled == true` 的 `SKILL.md` 绝对路径、父 root 和显示名；
+- `Ready` 只保存 `enabled == true` 的主 `SKILL.md` 绝对路径和显示名；不以目录后代、符号链接或前缀关系扩展隐藏范围；
 - 不保存 description、SKILL.md 正文、命令输出或会话内容；
 - `SessionConfigured`、cwd 切换、启动后台刷新和交互刷新都先取得 ticket；响应 handler 必须保留 ticket 的 cwd/generation，不能只传 `Result`；
 - 成功响应只更新 ticket 包含的 cwd，且仅当 generation 仍相等。请求中某 cwd 在 response 中没有唯一 entry、entry 有任何 `errors`、或路径不能形成权威轻量索引时，该 cwd 标记 `Failed` 并 fail-open；存在唯一 entry、`skills` 为空且 `errors` 为空时必须写入 `Ready(empty)`，不得重新混淆“已加载为空”和“加载失败”；
@@ -230,8 +230,8 @@ raw command string + round-trippable argv + item cwd + source + command_actions
 
 只接受两种聚合输出可证明安全的语法：
 
-1. 官方 action/解析结果恰为一个 `Read`，没有第二条命令；
-2. shell AST 恰为两个 plain command，由唯一顶层 `&&` 连接：左边 token 精确为无参数 `pwd`，右边单独调用官方 `parse_command` 后恰为一个 `Read`。整体 command 的官方 action 仍必须是 `Unknown`。
+1. argv 必须精确为无额外 operand 的 `cat <document>`，或 `sed -n 1,240p <document>`；同时官方 action/解析结果恰为一个 `Read`；
+2. shell AST 恰为两个 plain command，由唯一顶层 `&&` 连接：左边 token 精确为无参数 `pwd`，右边必须满足上一条的精确 argv 约束，并单独调用官方 `parse_command` 后恰为一个 `Read`。整体 command 的官方 action 仍必须是 `Unknown`。
 
 同时调用上游 `codex_skills::implicit_skill_accesses_for_command(raw_command, item_cwd)`：
 
@@ -239,9 +239,8 @@ raw command string + round-trippable argv + item cwd + source + command_actions
 - 不得得到 `Script`；
 - Document 必须与前述 Read 对应；
 - 路径比较使用 PathUri/路径组件，不使用字符串前缀；
-- Ready 时，Document 必须等于 skill 主文件，或位于其父 root 下；
-- root 嵌套时选最长的组件匹配；
-- skill 名称和最终 `WorkspaceReadSummary` 只能由 Ready catalog 的最长 root 匹配产生；Unrequested/Loading 阶段的 candidate 不得预填或猜测 skill 名；
+- Ready 时，Document 必须精确等于 catalog 的主 `SKILL.md`；附属/reference 文档、任意目录后代和符号链接目标一律完整显示；
+- skill 名称和最终 `WorkspaceReadSummary` 只能由 Ready catalog 的精确主文件匹配产生；Unrequested/Loading 阶段的 candidate 不得预填或猜测 skill 名；
 - renderer 只有在 presentation outcome 为 `Succeeded` 时才可使用上述 Ready 匹配；
 - 无匹配、相对路径无法解析、路径协议不一致时完整显示。
 
@@ -433,7 +432,6 @@ Full    → 完整 transcript
 - begin/end、completion-only、orphan completion；
 - 实际 `resume → 打开 Workspace` 路径，以及旧历史 page prepend；
 - item cwd 与 thread cwd 不同；
-- 独立 cell 读取同一 enabled skill root 下的 reference 文档。
 - Unrequested item cwd 经 App 去重刷新后转为 Ready；
 - 成功的 skill enable 后当前 cwd 重新 compact。
 
@@ -552,7 +550,7 @@ PATH="/opt/homebrew/opt/rustup/bin:$PATH" just fmt
 1. 技能 catalog 尚在 Unrequested/Loading、请求失败、response 不完整、entry 带 errors、锁读取失败或命令 outcome 仍为 Pending 时按红线 fail-open，正文可能暂时/持续可见；不以路径猜测或提前隐藏掩盖该事实。
 2. 成功的 skill enable/disable 会让全部缓存 cwd 暂时进入 Unrequested/Loading，因此刷新完成前，其他 skill 的既有摘要也可能短暂恢复成完整正文；这是使旧 ticket 失效、避免误隐藏的安全取舍。
 3. 恢复一个“对应 skill 已从本机删除或移动”的旧会话时，当前 catalog 无法权威证明该历史路径曾是 skill，因而完整显示。要跨卸载永久隐藏，必须持久化 UI annotation 或维护 sidecar 历史索引，这会扩大数据和迁移范围，本次不做。
-4. “reference 文档”只在当前权威 enabled skill root 可证明时隐藏；符号链接或路径解析不一致一律 fail-open。
+4. 附属/reference 文档始终完整显示，即使位于当前 enabled skill 目录中；这避免把目录后代、符号链接或混合读取输出误当作主技能文档。
 5. `UnifiedExecInteraction` 的现有 live 行为不展示 command output；为避免无正文路径变成新的 Workspace 摘要，本次明确不对它 compact，持久化 Interaction 也 fail-open。
 6. 当前 app-server 生成的 typed `CommandExecutionSource` 作为来源权威；本次不支持外部伪造或缺少 `source` 的 v2 payload。v2 source 字段与所有 source 枚举同一历史变更引入，UserShell 又早于该 v2 结构存在；当前未发现 app-server 生成 source-less UserShell item 的路径，仍以真实 UserShell 持久化恢复测试锁定运行态，不把源码推导冒充运行态证明。
 7. 本方案针对当前 macOS/iTerm2 使用场景；上游 `codex-skills` 的 Windows 路径识别保持不变，但本次人工验收不宣称覆盖 Windows 终端。
