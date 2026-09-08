@@ -56,6 +56,7 @@ use crate::chatwidget::ThreadUsageOutcome;
 use crate::chatwidget::UserMessage;
 use crate::experimental_features::FeatureWriteResult;
 use crate::goal_files::GoalDraft;
+use crate::workspace_skill_output::WorkspaceSkillRefreshTicket;
 use codex_app_server_protocol::AskForApproval;
 use codex_config::types::ApprovalsReviewer;
 use codex_features::Feature;
@@ -993,6 +994,7 @@ pub(crate) enum AppEvent {
     /// completes.
     SkillsListLoaded {
         cwd: PathBuf,
+        ticket: Vec<WorkspaceSkillRefreshTicket>,
         result: Result<SkillsListResponse, String>,
     },
 

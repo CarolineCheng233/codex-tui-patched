@@ -180,6 +180,7 @@ async fn startup_skill_load_order_preserves_runtime_error_recurrence() -> Result
                     &mut server,
                     AppEvent::SkillsListLoaded {
                         cwd: cwd.clone(),
+                        ticket: Vec::new(),
                         result: Ok(response.clone()),
                     },
                 )

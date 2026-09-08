@@ -78,15 +78,78 @@ enum WorkspaceCatalogState {
     Failed,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct WorkspaceSkillRefreshTicket {
+    cwd: PathUri,
+    generation: u64,
+}
+
+impl WorkspaceSkillRefreshTicket {
+    pub(crate) fn is_for_cwd(&self, cwd: &PathUri) -> bool {
+        self.cwd == *cwd
+    }
+}
+
+#[derive(Debug, Default)]
+struct WorkspaceSkillCatalogEntry {
+    generation: u64,
+    state: WorkspaceCatalogState,
+}
+
 #[derive(Debug, Default)]
 pub(crate) struct WorkspaceSkillCatalog {
-    states: RwLock<HashMap<PathUri, WorkspaceCatalogState>>,
-    generations: RwLock<HashMap<PathUri, u64>>,
+    entries: RwLock<HashMap<PathUri, WorkspaceSkillCatalogEntry>>,
 }
 
 impl WorkspaceSkillCatalog {
+    pub(crate) fn sync_response_if_current(
+        &self,
+        response: &SkillsListResponse,
+        expected: &[WorkspaceSkillRefreshTicket],
+    ) -> bool {
+        if expected.is_empty() {
+            return false;
+        }
+        let Ok(mut entries) = self.entries.write() else {
+            return false;
+        };
+        if expected
+            .iter()
+            .any(|ticket| !Self::is_current(&entries, ticket))
+        {
+            return false;
+        }
+        for ticket in expected {
+            let state = response
+                .data
+                .iter()
+                .filter(|entry| {
+                    PathUri::from_host_native_path(&entry.cwd).is_ok_and(|cwd| cwd == ticket.cwd)
+                })
+                .map(Self::state_from_response_entry)
+                .collect::<Vec<_>>();
+            let entry = entries
+                .get_mut(&ticket.cwd)
+                .expect("current workspace skill ticket must have a catalog entry");
+            entry.state = match state.as_slice() {
+                [state] => state.clone(),
+                _ => WorkspaceCatalogState::Failed,
+            };
+        }
+        true
+    }
+
+    pub(crate) fn current_ticket(&self, cwd: &PathUri) -> Option<WorkspaceSkillRefreshTicket> {
+        let entries = self.entries.read().ok()?;
+        let entry = entries.get(cwd)?;
+        Some(WorkspaceSkillRefreshTicket {
+            cwd: cwd.clone(),
+            generation: entry.generation,
+        })
+    }
+
     pub(crate) fn sync_response(&self, response: &SkillsListResponse) {
-        let Ok(mut states) = self.states.write() else {
+        let Ok(mut entries) = self.entries.write() else {
             return;
         };
 
@@ -94,64 +157,74 @@ impl WorkspaceSkillCatalog {
             let Ok(cwd) = PathUri::from_host_native_path(&entry.cwd) else {
                 continue;
             };
-            let state = if entry.errors.is_empty() {
-                WorkspaceCatalogState::Ready(
-                    entry
-                        .skills
-                        .iter()
-                        .filter(|skill| skill.enabled)
-                        .filter_map(WorkspaceSkillRoot::from_skill)
-                        .collect(),
-                )
-            } else {
-                WorkspaceCatalogState::Failed
-            };
-            states.insert(cwd, state);
+            entries.entry(cwd).or_default().state = Self::state_from_response_entry(entry);
         }
     }
 
     pub(crate) fn begin_refresh_if_unrequested(&self, cwd: &PathUri) -> bool {
-        let Ok(mut states) = self.states.write() else {
+        let Ok(mut entries) = self.entries.write() else {
             return false;
         };
-        match states.entry(cwd.clone()).or_default() {
-            WorkspaceCatalogState::Unrequested => {
-                states.insert(cwd.clone(), WorkspaceCatalogState::Loading);
-                if let Ok(mut generations) = self.generations.write() {
-                    let generation = generations.entry(cwd.clone()).or_default();
-                    *generation = generation.saturating_add(1);
-                }
-                true
-            }
-            WorkspaceCatalogState::Loading
-            | WorkspaceCatalogState::Ready(_)
-            | WorkspaceCatalogState::Failed => false,
+        let entry = entries.entry(cwd.clone()).or_default();
+        if !matches!(entry.state, WorkspaceCatalogState::Unrequested) {
+            return false;
         }
+        entry.state = WorkspaceCatalogState::Loading;
+        entry.generation = entry.generation.saturating_add(1);
+        true
     }
 
     pub(crate) fn mark_failed_for_cwds(&self, cwds: &[std::path::PathBuf]) {
-        let Ok(mut states) = self.states.write() else {
+        let Ok(mut entries) = self.entries.write() else {
             return;
         };
         for cwd in cwds {
             if let Ok(cwd) = PathUri::from_host_native_path(cwd) {
-                states.insert(cwd, WorkspaceCatalogState::Failed);
+                entries.entry(cwd).or_default().state = WorkspaceCatalogState::Failed;
             }
         }
     }
 
-    pub(crate) fn invalidate_all(&self) {
-        let Ok(mut states) = self.states.write() else {
-            return;
-        };
-        for state in states.values_mut() {
-            *state = WorkspaceCatalogState::Unrequested;
+    pub(crate) fn mark_failed_if_current(&self, tickets: &[WorkspaceSkillRefreshTicket]) -> bool {
+        if tickets.is_empty() {
+            return false;
         }
+        let Ok(mut entries) = self.entries.write() else {
+            return false;
+        };
+        if tickets
+            .iter()
+            .any(|ticket| !Self::is_current(&entries, ticket))
+        {
+            return false;
+        }
+        for ticket in tickets {
+            entries
+                .get_mut(&ticket.cwd)
+                .expect("current workspace skill ticket must have a catalog entry")
+                .state = WorkspaceCatalogState::Failed;
+        }
+        true
+    }
+
+    pub(crate) fn invalidate_all(&self) -> Vec<std::path::PathBuf> {
+        let Ok(mut entries) = self.entries.write() else {
+            return Vec::new();
+        };
+        let mut cwds = Vec::with_capacity(entries.len());
+        for (cwd, entry) in entries.iter_mut() {
+            entry.generation = entry.generation.saturating_add(1);
+            entry.state = WorkspaceCatalogState::Unrequested;
+            if let Ok(cwd) = cwd.to_abs_path() {
+                cwds.push(cwd.to_path_buf());
+            }
+        }
+        cwds
     }
 
     fn summary_for(&self, candidate: &WorkspaceSkillReadCandidate) -> Option<WorkspaceReadSummary> {
-        let states = self.states.read().ok()?;
-        let WorkspaceCatalogState::Ready(roots) = states.get(&candidate.cwd)? else {
+        let entries = self.entries.read().ok()?;
+        let WorkspaceCatalogState::Ready(roots) = &entries.get(&candidate.cwd)?.state else {
             return None;
         };
         let root = roots
@@ -163,6 +236,30 @@ impl WorkspaceSkillCatalog {
         Some(WorkspaceReadSummary {
             name: format!("{} ({} skill)", candidate.filename, root.name),
         })
+    }
+
+    fn is_current(
+        entries: &HashMap<PathUri, WorkspaceSkillCatalogEntry>,
+        ticket: &WorkspaceSkillRefreshTicket,
+    ) -> bool {
+        entries
+            .get(&ticket.cwd)
+            .is_some_and(|entry| entry.generation == ticket.generation)
+    }
+
+    fn state_from_response_entry(
+        entry: &codex_app_server_protocol::SkillsListEntry,
+    ) -> WorkspaceCatalogState {
+        if !entry.errors.is_empty() {
+            return WorkspaceCatalogState::Failed;
+        }
+        let roots = entry
+            .skills
+            .iter()
+            .filter(|skill| skill.enabled)
+            .map(WorkspaceSkillRoot::from_skill)
+            .collect::<Option<Vec<_>>>();
+        roots.map_or(WorkspaceCatalogState::Failed, WorkspaceCatalogState::Ready)
     }
 }
 
@@ -255,3 +352,7 @@ pub(crate) fn completion_outcome(
         WorkspaceCommandOutcome::Failed
     }
 }
+
+#[cfg(test)]
+#[path = "workspace_skill_output_tests.rs"]
+mod tests;

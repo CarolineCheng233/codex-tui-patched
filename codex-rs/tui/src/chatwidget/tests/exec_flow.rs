@@ -19,6 +19,70 @@ async fn workspace_skill_unrequested_cwd_requests_skills_once() {
 }
 
 #[tokio::test]
+async fn workspace_skill_ticket_ignores_skills_for_an_unrequested_cwd() {
+    let (mut chat, _rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+    let current_cwd = chat.config.cwd.to_path_buf();
+    let initial_skill = test_path_buf("/tmp/current-skill/SKILL.md").abs();
+    chat.set_skills_from_response(&codex_app_server_protocol::SkillsListResponse {
+        data: vec![codex_app_server_protocol::SkillsListEntry {
+            cwd: current_cwd.clone(),
+            skills: vec![SkillMetadata {
+                name: "current".to_string(),
+                description: "current skill".to_string(),
+                short_description: None,
+                interface: None,
+                dependencies: None,
+                path: initial_skill,
+                scope: crate::test_support::skill_scope_repo(),
+                enabled: true,
+                plugin_id: None,
+            }],
+            errors: Vec::new(),
+        }],
+    });
+
+    let other_cwd = test_path_buf("/tmp/workspace-skill-other-cwd").abs();
+    let other_cwd_uri = codex_utils_path_uri::PathUri::from_abs_path(&other_cwd);
+    let catalog = chat.workspace_skill_catalog();
+    assert!(catalog.begin_refresh_if_unrequested(&other_cwd_uri));
+    let ticket = vec![
+        catalog
+            .current_ticket(&other_cwd_uri)
+            .expect("refresh ticket"),
+    ];
+
+    let stale_skill = test_path_buf("/tmp/stale-current-skill/SKILL.md").abs();
+    assert!(chat.set_skills_from_current_ticket(
+        &codex_app_server_protocol::SkillsListResponse {
+            data: vec![codex_app_server_protocol::SkillsListEntry {
+                cwd: current_cwd,
+                skills: vec![SkillMetadata {
+                    name: "stale-current".to_string(),
+                    description: "unexpected extra response entry".to_string(),
+                    short_description: None,
+                    interface: None,
+                    dependencies: None,
+                    path: stale_skill,
+                    scope: crate::test_support::skill_scope_repo(),
+                    enabled: true,
+                    plugin_id: None,
+                }],
+                errors: Vec::new(),
+            }],
+        },
+        &ticket,
+    ));
+
+    assert_eq!(
+        chat.skills_all
+            .iter()
+            .map(|skill| skill.name.as_str())
+            .collect::<Vec<_>>(),
+        vec!["current"]
+    );
+}
+
+#[tokio::test]
 async fn workspace_skill_zsh_pwd_then_sed_compacts_only_workspace_output() {
     let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
     chat.on_task_started();

@@ -1242,11 +1242,17 @@ impl App {
             } => {
                 self.handle_mcp_inventory_result(result, detail, thread_id);
             }
-            AppEvent::SkillsListLoaded { result, .. } => {
-                self.handle_skills_list_result(
-                    result.map_err(|err| color_eyre::eyre::eyre!(err)),
-                    "failed to load skills on startup",
-                );
+            AppEvent::SkillsListLoaded { result, ticket, .. } => {
+                let result = result.map_err(|err| color_eyre::eyre::eyre!(err));
+                if ticket.is_empty() {
+                    self.handle_skills_list_result(result, "failed to load skills on startup");
+                } else {
+                    self.handle_skills_list_result_if_current(
+                        result,
+                        "failed to load skills on startup",
+                        &ticket,
+                    );
+                }
                 self.skill_load_warnings.startup_complete = true;
             }
             AppEvent::StartFileSearch(query) => {
