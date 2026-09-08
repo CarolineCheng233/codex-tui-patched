@@ -1,8 +1,8 @@
 # Transcript Workspace 最终实施方案
 
-> 状态：**第一版已实施，但对抗式复核发现两个 P1 根因：Composer 高度未纳入工作区输入定位，以及底部追加用户消息后未更新自动目标。本文件已收敛为待实施的最终修复方案；本轮仅更新文档，尚未修改 Rust 代码。**
+> 状态：**已实施并完成定向验收。** 第一版之后发现的两个 P1 根因（Composer 高度未纳入工作区输入定位、底部追加用户消息后未更新自动目标）已由 `b6f33bb613` 修复；静态检查收口由 `d7f86ca961` 完成。本文件保留问题归因、设计与对抗审查，作为可追溯的实施和验收记录。
 >
-> 本文覆盖标题栏提示、技能正文输出、轮次折叠目标、历史用户消息样式，以及 `/exit` 后向 shell 泄漏鼠标事件。第一版的已通过项保留为历史证据；第 7–9 节定义修复 P1 后才能宣称完成的目标、实现边界、对抗审查与验收门槛。
+> 本文覆盖标题栏提示、技能正文输出、轮次折叠目标、历史用户消息样式，以及 `/exit` 后向 shell 泄漏鼠标事件。第一版的已通过项保留为历史证据；第 7–9 节记录 P1 的实现不变量、对抗审查与验收边界。
 
 ## 1. 目标与完成标准
 
@@ -134,39 +134,42 @@ WorkspaceRenderProfile
 
 实际退出路径先由 `restore_common` 关闭 Codex 启用的鼠标上报并恢复 raw/cursor 状态，再刷新 stdin 内核队列，最后完成 stderr 收尾；Overlay 关闭路径另行关闭鼠标捕获并离开备用屏幕。不得关闭 shell 自身使用的 bracketed paste，不得写入 iTerm2 Profile、zsh 配置或全局鼠标设置。
 
-## 4. 第一版实施结果
+## 4. 实施结果
 
 1. **渲染隔离**：工作区专属渲染策略已接入已完成 cell 与 live tail；普通 Transcript 使用原路径。
 2. **缓存索引**：`WorkspaceLayoutIndex` 已覆盖换行、留白、图片预留、折叠占位和宽度变化；滚动定位为缓存二分查找。
 3. **UI 表现**：工作区标题单行截断、用户消息统一主题、目标轮次使用 `▸` 标记已完成。
 4. **退出清理**：`restore_after_exit` 已在恢复终端后刷新 stdin 队列；原有鼠标关闭序列保持不变。
 5. **自动化验收**：定向测试和隔离验收脚本通过；完整套件存在与本改动无关的外部服务/环境失败，详见 5.1。
-6. **持久化**：本方案、代码和测试作为同一变更单元提交；不推送官方仓库或替换系统 `codex`。
+6. **持久化**：方案、功能代码、静态检查与验收记录均拆为可回滚提交；不推送官方仓库或替换系统 `codex`。
+7. **P1-A 实时几何**：绘制与输入事件共用 `workspace_input::transcript_workspace_layout`。键盘、滚轮和分页只接收当前 `layout.transcript`，而不是整个终端区域；普通 Pager 仍从原完整视口入口处理。
+8. **P1-B 目标来源**：新增私有 `WorkspaceTargetMode`。滚动同步为 `FollowViewport`，`Option+Up/Down` 成功切换后为 `Manual`；只有“底部 + 自动模式 + 新用户消息”才选择最新轮次。
+9. **P2 静态检查**：布局索引改为独占 `Box`，并移除两处与严格 clippy 冲突的等价测试克隆；不改变缓存生命周期或产品行为。
 
-## 5. 第一版验收记录与复核结果
+## 5. 验收记录与复核结果
 
 ### 5.1 自动化验收
 
-1. 已确认技能路径在工作区只显示摘要；普通完整 Transcript 和原始会话仍保留正文（定向测试通过）。
-2. 非技能的同名 `SKILL.md`、未标注读取和混合命令组保持完整输出（回归测试通过）。
-3. live tail 与已完成 cell 使用同一工作区策略（代码路径与定向测试覆盖）。
-4. 两轮以上的常规会话中，滚动到旧轮次后目标会切换到旧轮次（原回归测试通过）；该测试没有覆盖多行 Composer 和底部追加新用户消息，不能证明 P1 已修复。
-5. 目标定位计入换行、留白、图片预留、折叠占位、历史插入和宽度变化（原工作区测试通过）；输入路由仍错误地把完整终端区域传给定位逻辑，见第 7.2.1。
-6. 重复滚动使用宽度键控索引和 O(log n) 轮次查找；目标标记更新不重建整份 renderables（计数回归测试通过）。
-7. 两条非相邻用户消息的工作区背景一致；目标仅改变前缀（回归测试通过）。
-8. 标题栏只在工作区启用单行宽度截断；普通 pager 标题行为不变（工作区快照已更新）。
-9. `/exit` 清理路径已补充 stdin 队列刷新；已在隔离 iTerm2 PTY 启动本地包并执行 `/exit`，回到 shell 未出现 `35;…M`；物理移动、点击和滚轮尚未实测。
-10. `Ctrl+C`、`Ctrl+U`、固定 Composer、图片预览和 Code Mode host 隔离验收通过。
+P1 复核新增的五个回归场景全部通过：
+
+1. 底部自动模式追加用户消息后，目标立即切换至该新轮次。
+2. `Option+Up` 手动选择旧轮次后，即使底部追加用户消息，也不覆盖该选择。
+3. 随后一次滚动恢复自动跟随；下一条用户消息再次成为目标。
+4. 3 行 Composer、9 行完整窗口下的 `PageUp` 以实际 Transcript 区域定位，而非完整窗口高度。
+5. 同一几何下的滚轮也只以实际 Transcript 区域定位。
+
+已有功能的技能摘要、统一用户背景、折叠/展开、图片预览、固定 Composer、`Ctrl+U`、非空输入时 `Ctrl+C` 和 Code Mode host 均由既有定向用例回归。
 
 本次验证记录：
 
-- `just fmt`：通过。
-- `just test -p codex-tui pager_overlay`：41/41 通过。
+- `just test -p codex-tui pager_overlay`：46/46 通过。
 - `just test -p codex-tui exec_cell`：21/21 通过。
-- `./scripts/verify-patched-tui.sh`：通过（配置 1、工作区/图片 8、Code Mode host 1）。
-- `./scripts/build-patched-tui.sh`：release 包构建成功；包内 `bin/codex --version` 为 `codex-cli 0.0.0`（仅有既有 linker/future-incompatibility 警告）。
-- `just test -p codex-tui`：4,307/4,332 通过；25 个失败来自 wiremock/响应服务超时、交互启动环境和既有 `custom_terminal` 颜色快照，未涉及本次改动文件，不能记为全套通过。
-- 隔离 iTerm2 冒烟：使用本地 release 包启动专用窗口，确认工作区标题单行显示、Composer 位于底部；执行 `/exit` 后回到 shell，未观察到 `35;…M` 残留。未操作用户已有窗口，且未以该冒烟替代完整人工交互验收。
+- `cargo clippy -p codex-tui --tests -- -D warnings`：通过。
+- `./scripts/verify-patched-tui.sh`：通过（配置、工作区/图片、Code Mode host 检查均通过）。
+- `./scripts/build-patched-tui.sh`：release 包构建成功；包内 `bin/codex --version` 为 `codex-cli 0.0.0`。仅有上游 linker 与 future-incompatibility 警告。
+- `cargo fmt --all -- --config imports_granularity=Item` 与 `git diff --check`：通过。`just fmt` 因本机缺少仓库 Bazel formatter 所需的 `dotslash` 而在 Rust 格式检查前失败；这不是源码格式错误，且未修改 Bazel/工具链配置。
+- `just test -p codex-tui`：4,337 项中 4,312 通过、25 失败、6 跳过。25 项均在未改动的 app-server/wiremock、响应服务重连、会话恢复或 `custom_terminal` 终端配色快照中；新增及相关 Workspace 测试均通过。因此它不是“全套通过”的证据，但没有本次路径的失败。
+- 隔离 PTY 的既有 `/exit` 回归已记录为回到 shell 且无 `35;76;26M` 残留；本次 P1 没有修改退出或终端恢复路径。复跑物理 UI 时，包在连接本机 app-server 阶段持续等待，未进入可交互主界面，故不把该环境受阻复跑冒充为人工验收通过。
 
 运行门槛：
 
@@ -205,7 +208,7 @@ just test -p codex-tui
 | `/exit` 后残留 SGR 鼠标字节进入 zsh | 先恢复 Codex 终端状态，再刷新 stdin 队列 | 隔离 iTerm2 冒烟通过；其后以同一 PTY 写入 `/exit\\r` 和 SGR 鼠标字节，确认回到 shell 且未泄漏 `35;76;26M`。真实物理事件仍待 8.2 |
 | 临时包覆盖系统安装或修改用户配置 | 启动脚本只调用仓库包；未改 `/Applications/Codex`、`.zshrc` 或 iTerm2 Profile | 只读检查通过 |
 
-更新后的审查结论：第一版不存在新的 `/exit` 字节泄漏证据，但已确认两个会影响核心折叠交互的 P1 根因。它们不能以“原定向测试已通过”掩盖，必须按第 7 节修复并通过第 8 节验收，才可重新标记为完成。
+更新后的审查结论：两个 P1 根因均已按第 7 节实现，并由第 8.1 节的反例测试覆盖。全量套件的 25 个环境/上游失败不构成 P1 失败，但阻止把结果表述为“完整 TUI 套件全绿”；真实 iTerm2 人工交互仍应在本机 app-server 可用时按第 8.2 节补录。
 
 ## 6. 红线
 
@@ -217,9 +220,11 @@ just test -p codex-tui
 6. 不改变 `Ctrl+U`、非空输入时的 `Ctrl+C`、Enter、会话持久化或图片预览行为。
 7. 不将视觉折叠宣称为安全或保密能力。
 8. 不把本地 release 包当作生产发布；隔离冒烟只证明启动和正常 `/exit` 路径，不得替代 5.2 的完整人工验收，也不推送远端。
-9. 在 P1 修复和第 8 节验收完成前，不得宣称“工作区轮次定位已完成”，也不得扩大改动到官方 App、系统安装或用户配置。
+9. 轮次定位只在本地包和第 5.1 节覆盖的自动化范围内验收；不得将该结果扩大为官方 App、系统安装或用户配置已被修改。
 
-## 7. P1 修复最终方案（待实施）
+## 7. P1 修复实施记录
+
+以下方案已实施。保留设计细节以便后续升级 Codex TUI 时可按相同不变量处理冲突；实际变更见 `b6f33bb613` 与 `d7f86ca961`。
 
 ### 7.1 目标与非目标
 
@@ -315,6 +320,8 @@ enum WorkspaceTargetMode {
 
 ### 8.1 自动化验收
 
+**结果：通过（定向范围）。** 下列 P1-A/P1-B 场景已实现为 `pager_overlay_transcript_workspace_tests.rs` 回归测试，并由 `just test -p codex-tui pager_overlay` 的 46 项结果覆盖。第 5.1 节记录了命令、版本和完整套件的环境边界。
+
 新增或扩展 `codex-rs/tui/src/pager_overlay_transcript_workspace_tests.rs`；必要时补充相邻 App 集成测试。最少覆盖：
 
 1. 10 行完整终端、3 行 Composer、7 行 Transcript 的边界：底边定位只能选择实际 Transcript 底边的轮次，不得选择完整终端底边的下一轮。
@@ -331,6 +338,8 @@ enum WorkspaceTargetMode {
 
 ### 8.2 iTerm2 隔离人工验收
 
+**状态：待本机 app-server 可交互时补录，不作为已通过项。** 当前环境启动隔离本地包后持续停留在 app-server 连接阶段，无法在不伪造对话的前提下完成鼠标、分页和发送新消息的真实 UI 操作。不得以此失败扩大补丁到网络、认证或系统配置。
+
 只在专用 iTerm2 测试窗口使用仓库脚本，不操作用户已有终端或官方 Codex：
 
 1. 输入多行草稿使 Composer 升高，滚到旧轮次，分别用 wheel、`PageUp`、`PageDown` 定位，按 `Option+Left`；每次只折叠边界对应轮次。
@@ -343,11 +352,11 @@ enum WorkspaceTargetMode {
 
 ### 8.3 实施提交、回滚与交付门槛
 
-实现时按独立、可回滚的 Git 提交拆分：
+实际提交按最小可回滚单元完成：
 
-1. `fix: 使用实际 Transcript 区域定位工作区轮次`：布局帮助函数、Pager 显式区域入口及 P1-A 测试。
-2. `fix: 区分工作区自动与手动折叠目标`：目标模式、追加规则及 P1-B 测试。
-3. `chore: 收口 Transcript Workspace 静态检查与验收`：仅 clippy 收口和与本次修复直接相关的文档/验收记录。
+1. `b6f33bb613 fix: 修复 Transcript Workspace 轮次定位`：P1-A 和 P1-B 共用事件/Overlay 状态链，连同全部回归测试作为一个可独立回滚的用户可见修复提交。
+2. `d7f86ca961 chore: 收口 TUI 严格 clippy 告警`：仅包含两处等价测试克隆清理。
+3. 本文档的验收记录单独提交，不混入功能代码。
 
 每次提交前检查 `git status --short`、`git diff`、`git diff --cached`，只暂存明确文件；不创建或切换分支，不推送远端。若某个提交需要包含无关改动，必须拆开而非混入。
 
@@ -360,4 +369,4 @@ enum WorkspaceTargetMode {
 3. 不把索引重建、文本测量或 `Vec` 分配放进 wheel/PageUp 热路径。
 4. 不扩大 `PagerView` 的公开语义；显式区域入口必须保持模块私有，普通调用保持原行为。
 5. 不改变会话数据、原始命令输出、普通 Transcript、主聊天区、终端模式恢复、系统 Codex、iTerm2 或 zsh 配置。
-6. 不因为本地 `codex-cli 0.0.0` 构建成功就推送或替换官方安装；未完成本节验收前不发布、不宣称修复完成。
+6. 不因为本地 `codex-cli 0.0.0` 构建成功就推送或替换官方安装；定向验收完成不等于发布，iTerm2 人工项未补录前也不得声明完整人工验收完成。
