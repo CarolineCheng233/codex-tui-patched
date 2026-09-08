@@ -188,29 +188,33 @@ impl ExecCell {
     }
 
     /// Skill instructions are implementation details of an agent turn. Keep
-    /// their command output compact only when the command parser annotated an
-    /// exact, enabled skill-path match for every read in an exploring group.
-    /// Mixed groups fail open so an unrelated command's output is never hidden.
-    pub(crate) fn reads_skill_instructions(&self) -> bool {
-        self.is_exploring_cell()
-            && self
-                .calls
-                .iter()
-                .flat_map(|call| &call.parsed)
-                .any(Self::is_skill_read)
-            && self
-                .calls
-                .iter()
-                .flat_map(|call| &call.parsed)
-                .all(Self::is_skill_read)
+    /// their command output compact only when every parsed read in this call
+    /// is inside a skill directory identified by an exact, enabled skill-path
+    /// annotation. Mixed calls fail open because their aggregate output cannot
+    /// be attributed to individual parsed commands safely.
+    pub(crate) fn call_reads_skill_content(&self, call: &ExecCall) -> bool {
+        Self::is_exploring_call(call)
+            && call.parsed.iter().all(|parsed| {
+                let ParsedCommand::Read { path, .. } = parsed else {
+                    return false;
+                };
+                self.calls
+                    .iter()
+                    .flat_map(|candidate| &candidate.parsed)
+                    .filter_map(Self::annotated_skill_root)
+                    .any(|root| path.starts_with(root))
+            })
     }
 
-    fn is_skill_read(parsed: &ParsedCommand) -> bool {
-        matches!(
-            parsed,
-            ParsedCommand::Read { name, .. }
-                if name.starts_with("SKILL.md (") && name.ends_with(" skill)")
-        )
+    fn annotated_skill_root(parsed: &ParsedCommand) -> Option<&std::path::Path> {
+        match parsed {
+            ParsedCommand::Read { name, path, .. }
+                if name.starts_with("SKILL.md (") && name.ends_with(" skill)") =>
+            {
+                path.parent().filter(|root| !root.as_os_str().is_empty())
+            }
+            _ => None,
+        }
     }
 
     pub(crate) fn append_output(&mut self, call_id: &str, chunk: &str) -> bool {

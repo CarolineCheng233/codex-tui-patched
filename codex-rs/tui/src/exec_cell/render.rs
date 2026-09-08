@@ -194,8 +194,58 @@ impl HistoryCell for ExecCell {
     }
 
     fn transcript_lines(&self, width: u16) -> Vec<Line<'static>> {
+        ExecCell::transcript_lines_for_calls(&self.calls, width)
+    }
+
+    fn workspace_transcript_hyperlink_lines(
+        &self,
+        width: u16,
+    ) -> Vec<crate::terminal_hyperlinks::HyperlinkLine> {
+        if !self.is_exploring_cell()
+            || !self
+                .calls
+                .iter()
+                .any(|call| self.call_reads_skill_content(call))
+        {
+            return self.transcript_hyperlink_lines(width);
+        }
+
+        let mut lines = vec![self.exploring_header_line()];
+        let mut calls = self.calls.as_slice();
+        let mut first_block = true;
+        while let Some((call, remaining)) = calls.split_first() {
+            let compact_skill_content = self.call_reads_skill_content(call);
+            let block_len = 1 + remaining
+                .iter()
+                .take_while(|next| self.call_reads_skill_content(next) == compact_skill_content)
+                .count();
+            let (block, remaining) = calls.split_at(block_len);
+            calls = remaining;
+
+            let mut block_lines = if compact_skill_content {
+                self.exploring_display_lines_for_calls(block, width)
+            } else {
+                ExecCell::transcript_lines_for_calls(block, width)
+            };
+            if !first_block && !block_lines.is_empty() {
+                lines.push("".into());
+            }
+            first_block = false;
+            lines.append(&mut block_lines);
+        }
+
+        plain_hyperlink_lines(lines)
+    }
+
+    fn raw_lines(&self) -> Vec<Line<'static>> {
+        plain_lines(self.transcript_lines(u16::MAX))
+    }
+}
+
+impl ExecCell {
+    fn transcript_lines_for_calls(calls: &[ExecCall], width: u16) -> Vec<Line<'static>> {
         let mut lines: Vec<Line<'static>> = vec![];
-        for (i, call) in self.iter_calls().enumerate() {
+        for (i, call) in calls.iter().enumerate() {
             if i > 0 {
                 lines.push("".into());
             }
@@ -238,26 +288,6 @@ impl HistoryCell for ExecCell {
         }
         lines
     }
-
-    fn workspace_transcript_hyperlink_lines(
-        &self,
-        width: u16,
-    ) -> Vec<crate::terminal_hyperlinks::HyperlinkLine> {
-        if self.reads_skill_instructions() {
-            // The normal compact presentation says which skill was read while
-            // intentionally omitting the instruction body.
-            plain_hyperlink_lines(self.display_lines(width))
-        } else {
-            self.transcript_hyperlink_lines(width)
-        }
-    }
-
-    fn raw_lines(&self) -> Vec<Line<'static>> {
-        plain_lines(self.transcript_lines(u16::MAX))
-    }
-}
-
-impl ExecCell {
     fn output_ellipsis_text(omitted: usize) -> String {
         format!("… +{omitted} lines ({TRANSCRIPT_HINT})")
     }
@@ -267,8 +297,13 @@ impl ExecCell {
     }
 
     fn exploring_display_lines(&self, width: u16) -> Vec<Line<'static>> {
-        let mut out: Vec<Line<'static>> = Vec::new();
-        out.push(Line::from(vec![
+        let mut out = vec![self.exploring_header_line()];
+        out.extend(self.exploring_display_lines_for_calls(&self.calls, width));
+        out
+    }
+
+    fn exploring_header_line(&self) -> Line<'static> {
+        Line::from(vec![
             if self.is_active() {
                 activity_marker(self.active_start_time(), self.animations_enabled())
             } else {
@@ -280,9 +315,15 @@ impl ExecCell {
             } else {
                 "Explored".bold()
             },
-        ]));
+        ])
+    }
 
-        let mut calls = self.calls.as_slice();
+    fn exploring_display_lines_for_calls(
+        &self,
+        calls: &[ExecCall],
+        width: u16,
+    ) -> Vec<Line<'static>> {
+        let mut calls = calls;
         let mut out_indented = Vec::new();
         while let Some((call, remaining)) = calls.split_first() {
             let reads_only = call
@@ -359,8 +400,7 @@ impl ExecCell {
             }
         }
 
-        out.extend(prefix_lines(out_indented, "  └ ".dim(), "    ".into()));
-        out
+        prefix_lines(out_indented, "  └ ".dim(), "    ".into())
     }
 
     fn command_display_lines(&self, width: u16) -> Vec<Line<'static>> {
@@ -1091,6 +1131,189 @@ mod tests {
             .map(|span| span.content.into_owned())
             .collect::<String>();
         assert!(mixed.contains("mixed command output remains visible"));
+    }
+
+    #[test]
+    fn workspace_compacts_skill_content_per_call_in_mixed_exploring_group() {
+        let mut cell = ExecCell::new(
+            ExecCall {
+                call_id: "skill-main".to_string(),
+                command: vec![
+                    "sed".to_string(),
+                    "-n".to_string(),
+                    "1,240p".to_string(),
+                    "/tmp/using-superpowers/SKILL.md".to_string(),
+                ],
+                parsed: vec![ParsedCommand::Read {
+                    cmd: "sed -n '1,240p' /tmp/using-superpowers/SKILL.md".to_string(),
+                    name: "SKILL.md (superpowers:using-superpowers skill)".to_string(),
+                    path: std::path::PathBuf::from("/tmp/using-superpowers/SKILL.md"),
+                }],
+                output: Some(CommandOutput::new(
+                    /*exit_code*/ 0,
+                    "PRIVATE MAIN SKILL BODY".to_string(),
+                )),
+                source: ExecCommandSource::Agent,
+                start_time: None,
+                duration: Some(Duration::from_millis(1)),
+                interaction_input: None,
+            },
+            /*animations_enabled*/ false,
+        );
+
+        assert!(cell.add_call(
+            "skill-reference".to_string(),
+            vec![
+                "sed".to_string(),
+                "-n".to_string(),
+                "1,240p".to_string(),
+                "/tmp/using-superpowers/references/codex-tools.md".to_string(),
+            ],
+            vec![ParsedCommand::Read {
+                cmd: "sed -n '1,240p' /tmp/using-superpowers/references/codex-tools.md".to_string(),
+                name: "codex-tools.md".to_string(),
+                path: std::path::PathBuf::from("/tmp/using-superpowers/references/codex-tools.md",),
+            }],
+            ExecCommandSource::Agent,
+            None,
+        ));
+        assert!(cell.complete_call(
+            "skill-reference",
+            CommandOutput::new(
+                /*exit_code*/ 0,
+                "PRIVATE SKILL REFERENCE BODY".to_string()
+            ),
+            Duration::from_millis(1),
+        ));
+
+        assert!(cell.add_call(
+            "ordinary-readme".to_string(),
+            vec![
+                "sed".to_string(),
+                "-n".to_string(),
+                "1,240p".to_string(),
+                "/tmp/project/README.md".to_string(),
+            ],
+            vec![ParsedCommand::Read {
+                cmd: "sed -n '1,240p' /tmp/project/README.md".to_string(),
+                name: "README.md".to_string(),
+                path: std::path::PathBuf::from("/tmp/project/README.md"),
+            }],
+            ExecCommandSource::Agent,
+            None,
+        ));
+        assert!(cell.complete_call(
+            "ordinary-readme",
+            CommandOutput::new(
+                /*exit_code*/ 0,
+                "VISIBLE ORDINARY FILE BODY".to_string()
+            ),
+            Duration::from_millis(1),
+        ));
+
+        let rendered = cell
+            .workspace_transcript_hyperlink_lines(/*width*/ 80)
+            .into_iter()
+            .map(|line| render_line_text(&line.line))
+            .join("\n");
+
+        assert!(!rendered.contains("PRIVATE MAIN SKILL BODY"));
+        assert!(!rendered.contains("PRIVATE SKILL REFERENCE BODY"));
+        assert!(rendered.contains("VISIBLE ORDINARY FILE BODY"));
+        assert!(rendered.contains("Read SKILL.md"));
+        assert!(rendered.contains("codex-tools.md"));
+
+        insta::assert_snapshot!(rendered, @r###"
+        • Explored
+          └ Read SKILL.md (superpowers:using-superpowers skill), codex-tools.md
+
+        $ sed -n '1,240p' /tmp/project/README.md
+        VISIBLE ORDINARY FILE BODY
+        ✓ • 1ms
+        "###);
+    }
+
+    #[test]
+    fn workspace_skill_content_requires_a_nonempty_component_bounded_root() {
+        let mut cell = ExecCell::new(
+            ExecCall {
+                call_id: "skill-main".to_string(),
+                command: vec!["sed".to_string(), "SKILL.md".to_string()],
+                parsed: vec![ParsedCommand::Read {
+                    cmd: "sed SKILL.md".to_string(),
+                    name: "SKILL.md (demo skill)".to_string(),
+                    path: std::path::PathBuf::from("/tmp/skill-root/SKILL.md"),
+                }],
+                output: Some(CommandOutput::new(
+                    /*exit_code*/ 0,
+                    "PRIVATE MAIN SKILL BODY".to_string(),
+                )),
+                source: ExecCommandSource::Agent,
+                start_time: None,
+                duration: Some(Duration::from_millis(1)),
+                interaction_input: None,
+            },
+            /*animations_enabled*/ false,
+        );
+
+        assert!(cell.add_call(
+            "sibling-file".to_string(),
+            vec![
+                "sed".to_string(),
+                "/tmp/skill-root-extra/README.md".to_string()
+            ],
+            vec![ParsedCommand::Read {
+                cmd: "sed /tmp/skill-root-extra/README.md".to_string(),
+                name: "README.md".to_string(),
+                path: std::path::PathBuf::from("/tmp/skill-root-extra/README.md"),
+            }],
+            ExecCommandSource::Agent,
+            None,
+        ));
+        assert!(cell.complete_call(
+            "sibling-file",
+            CommandOutput::new(
+                /*exit_code*/ 0,
+                "VISIBLE SIBLING FILE BODY".to_string()
+            ),
+            Duration::from_millis(1),
+        ));
+
+        assert!(!cell.call_reads_skill_content(&cell.calls[1]));
+        let rendered = cell
+            .workspace_transcript_hyperlink_lines(/*width*/ 80)
+            .into_iter()
+            .map(|line| render_line_text(&line.line))
+            .join("\n");
+        assert!(!rendered.contains("PRIVATE MAIN SKILL BODY"));
+        assert!(rendered.contains("VISIBLE SIBLING FILE BODY"));
+
+        let relative = ExecCell::new(
+            ExecCall {
+                call_id: "relative-skill".to_string(),
+                command: vec!["sed".to_string(), "SKILL.md".to_string()],
+                parsed: vec![ParsedCommand::Read {
+                    cmd: "sed SKILL.md".to_string(),
+                    name: "SKILL.md (relative skill)".to_string(),
+                    path: std::path::PathBuf::from("SKILL.md"),
+                }],
+                output: Some(CommandOutput::new(
+                    /*exit_code*/ 0,
+                    "VISIBLE RELATIVE SKILL FILE BODY".to_string(),
+                )),
+                source: ExecCommandSource::Agent,
+                start_time: None,
+                duration: Some(Duration::from_millis(1)),
+                interaction_input: None,
+            },
+            /*animations_enabled*/ false,
+        );
+        let relative_rendered = relative
+            .workspace_transcript_hyperlink_lines(/*width*/ 80)
+            .into_iter()
+            .map(|line| render_line_text(&line.line))
+            .join("\n");
+        assert!(relative_rendered.contains("VISIBLE RELATIVE SKILL FILE BODY"));
     }
 
     #[test]
