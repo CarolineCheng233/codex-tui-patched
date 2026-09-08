@@ -243,6 +243,7 @@ impl ChatWidget {
         let ThreadItem::CommandExecution {
             id,
             command,
+            cwd,
             source,
             command_actions,
             ..
@@ -250,8 +251,22 @@ impl ChatWidget {
         else {
             return;
         };
+        let raw_command = command.clone();
         let (command, parsed_cmd) =
             command_execution_command_and_parsed(&command, &command_actions);
+        let workspace_skill_read =
+            codex_utils_path_uri::PathUri::try_from(cwd)
+                .ok()
+                .and_then(|cwd| {
+                    crate::workspace_skill_output::classify_workspace_skill_read(
+                        &raw_command,
+                        &command,
+                        cwd,
+                        source,
+                        &parsed_cmd,
+                        self.workspace_skill_catalog.clone(),
+                    )
+                });
         // Ensure the status indicator is visible while the command runs.
         self.bottom_pane.ensure_status_indicator();
         let parsed_cmd = self.annotate_skill_reads_in_parsed_cmd(parsed_cmd);
@@ -261,6 +276,7 @@ impl ChatWidget {
                 command: command.clone(),
                 parsed_cmd: parsed_cmd.clone(),
                 source,
+                workspace_skill_read: workspace_skill_read.clone(),
             },
         );
         let is_wait_interaction = matches!(source, ExecCommandSource::UnifiedExecInteraction);
@@ -279,31 +295,42 @@ impl ChatWidget {
             self.suppressed_exec_calls.insert(id);
             return;
         }
-        if let Some(cell) = self
+        let added_to_active = if let Some(cell) = self
             .transcript
             .active_cell
             .as_mut()
             .and_then(|c| c.as_any_mut().downcast_mut::<ExecCell>())
-            && cell.add_call(
+        {
+            let added = cell.add_call(
                 id.clone(),
                 command.clone(),
                 parsed_cmd.clone(),
                 source,
                 /*interaction_input*/ None,
-            )
-        {
+            );
+            if added {
+                cell.set_workspace_skill_read(&id, workspace_skill_read.clone());
+            }
+            added
+        } else {
+            false
+        };
+        if added_to_active {
             self.bump_active_cell_revision();
         } else {
             self.flush_active_cell();
 
-            self.transcript.active_cell = Some(Box::new(new_active_exec_command(
+            let cell_call_id = id.clone();
+            let mut cell = new_active_exec_command(
                 id,
                 command,
                 parsed_cmd,
                 source,
                 /*interaction_input*/ None,
                 self.local_settings.tui.animations,
-            )));
+            );
+            cell.set_workspace_skill_read(&cell_call_id, workspace_skill_read);
+            self.transcript.active_cell = Some(Box::new(cell));
             self.bump_active_cell_revision();
         }
 
@@ -332,6 +359,7 @@ impl ChatWidget {
         let ThreadItem::CommandExecution {
             id,
             command,
+            cwd,
             process_id: _,
             source,
             status,
@@ -345,10 +373,12 @@ impl ChatWidget {
             return;
         };
         let event_command = split_command_string(&command);
-        let event_parsed = command_actions
+        let event_parsed: Vec<codex_protocol::parse_command::ParsedCommand> = command_actions
             .into_iter()
             .map(codex_app_server_protocol::CommandAction::into_core)
             .collect();
+        let workspace_outcome =
+            crate::workspace_skill_output::completion_outcome(status.clone(), exit_code);
         let duration = Duration::from_millis(duration_ms.unwrap_or_default().max(0) as u64);
         let exit_code = if status == codex_app_server_protocol::CommandExecutionStatus::Completed {
             exit_code.unwrap_or_default()
@@ -361,9 +391,28 @@ impl ChatWidget {
         if self.suppressed_exec_calls.remove(&id) {
             return;
         }
-        let (command, parsed, source) = match running {
-            Some(rc) => (rc.command, rc.parsed_cmd, rc.source),
-            None => (event_command, event_parsed, source),
+        let (command, parsed, source, workspace_skill_read) = match running {
+            Some(rc) => (
+                rc.command,
+                rc.parsed_cmd,
+                rc.source,
+                rc.workspace_skill_read,
+            ),
+            None => {
+                let workspace_skill_read = codex_utils_path_uri::PathUri::try_from(cwd)
+                    .ok()
+                    .and_then(|cwd| {
+                        crate::workspace_skill_output::classify_workspace_skill_read(
+                            &command,
+                            &event_command,
+                            cwd,
+                            source,
+                            &event_parsed,
+                            self.workspace_skill_catalog.clone(),
+                        )
+                    });
+                (event_command, event_parsed, source, workspace_skill_read)
+            }
         };
         let parsed = self.annotate_skill_reads_in_parsed_cmd(parsed);
         let is_unified_exec_interaction =
@@ -402,6 +451,7 @@ impl ChatWidget {
                     .and_then(|c| c.as_any_mut().downcast_mut::<ExecCell>())
                 {
                     let completed = cell.complete_call(&id, output, duration);
+                    cell.complete_workspace_skill_read(&id, workspace_outcome);
                     debug_assert!(completed, "active exec cell should contain {id}");
                     if cell.should_flush() {
                         self.flush_active_cell();
@@ -420,7 +470,9 @@ impl ChatWidget {
                     /*interaction_input*/ None,
                     self.local_settings.tui.animations,
                 );
+                orphan.set_workspace_skill_read(&id, workspace_skill_read);
                 let completed = orphan.complete_call(&id, output, duration);
+                orphan.complete_workspace_skill_read(&id, workspace_outcome);
                 debug_assert!(completed, "new orphan exec cell should contain {id}");
                 self.transcript.needs_final_message_separator = true;
                 self.app_event_tx
@@ -437,7 +489,9 @@ impl ChatWidget {
                     /*interaction_input*/ None,
                     self.local_settings.tui.animations,
                 );
+                cell.set_workspace_skill_read(&id, workspace_skill_read);
                 let completed = cell.complete_call(&id, output, duration);
+                cell.complete_workspace_skill_read(&id, workspace_outcome);
                 debug_assert!(completed, "new exec cell should contain {id}");
                 if cell.should_flush() {
                     self.add_to_history(cell);

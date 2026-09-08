@@ -136,6 +136,7 @@ impl ChatWidget {
     }
 
     pub(crate) fn set_skills_from_response(&mut self, response: &SkillsListResponse) {
+        self.workspace_skill_catalog.sync_response(response);
         let skills = skills_for_cwd(&self.config.cwd, &response.data);
         self.skills_all = skills;
         self.set_skills(Some(enabled_skills_for_mentions(&self.skills_all)));
@@ -161,7 +162,7 @@ impl ChatWidget {
             if let Some(skill) = self
                 .skills_all
                 .iter()
-                .find(|skill| skill.enabled && skill.path.as_path() == path)
+                .find(|skill| skill.path.as_path() == path)
             {
                 *name = format!("{name} ({} skill)", skill.name);
             }

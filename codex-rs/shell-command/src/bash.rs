@@ -126,6 +126,43 @@ pub fn parse_shell_lc_plain_commands(command: &[String]) -> Option<Vec<Vec<Strin
     parse_shell_script_into_commands(script)
 }
 
+/// Returns exactly two word-only shell commands joined by one top-level `&&`.
+///
+/// The helper is deliberately narrower than [`parse_shell_lc_plain_commands`]: callers can use it
+/// to recognize `pwd && <read>` without changing the public command parser's Unknown-collapse
+/// behavior. Redirections, substitutions, additional commands, and every other operator fail
+/// closed.
+pub fn parse_shell_lc_two_plain_commands_joined_by_and(
+    command: &[String],
+) -> Option<(Vec<String>, Vec<String>)> {
+    let (_, script) = extract_bash_command(command)?;
+    let tree = try_parse_shell(script)?;
+    let root = tree.root_node();
+    if root.has_error() || root.named_child_count() != 1 {
+        return None;
+    }
+
+    let list = root.named_child(0)?;
+    if list.kind() != "list" || list.named_child_count() != 2 {
+        return None;
+    }
+
+    let mut operators = Vec::new();
+    let mut cursor = list.walk();
+    for child in list.children(&mut cursor) {
+        if !child.is_named() && !child.kind().trim().is_empty() {
+            operators.push(child.kind());
+        }
+    }
+    if operators.as_slice() != ["&&"] {
+        return None;
+    }
+
+    let left = parse_plain_command_from_node(list.named_child(0)?, script)?;
+    let right = parse_plain_command_from_node(list.named_child(1)?, script)?;
+    Some((left, right))
+}
+
 /// Extracts the literal portions of command invocations from a shell script.
 ///
 /// Unlike [`parse_shell_lc_plain_commands`], this accepts complex shell syntax

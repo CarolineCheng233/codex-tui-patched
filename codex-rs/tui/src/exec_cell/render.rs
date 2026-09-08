@@ -14,6 +14,7 @@ use crate::render::line_utils::prefix_lines;
 use crate::render::line_utils::push_owned_lines;
 use crate::terminal_hyperlinks::plain_hyperlink_lines;
 use crate::ui_consts::TRANSCRIPT_HINT;
+use crate::workspace_skill_output::WorkspaceReadSummary;
 use crate::wrapping::RtOptions;
 use crate::wrapping::adaptive_wrap_line;
 use crate::wrapping::adaptive_wrap_lines;
@@ -60,6 +61,7 @@ pub(crate) fn new_active_exec_command(
             start_time: Some(Instant::now()),
             duration: None,
             interaction_input,
+            workspace_skill_read: None,
         },
         animations_enabled,
     )
@@ -201,11 +203,18 @@ impl HistoryCell for ExecCell {
         &self,
         width: u16,
     ) -> Vec<crate::terminal_hyperlinks::HyperlinkLine> {
-        if !self.is_exploring_cell()
-            || !self
-                .calls
-                .iter()
-                .any(|call| self.call_reads_skill_content(call))
+        let has_workspace_skill_read = self.calls.iter().any(|call| {
+            call.workspace_skill_read
+                .as_ref()
+                .and_then(|presentation| presentation.summary())
+                .is_some()
+        });
+        if !has_workspace_skill_read
+            && (!self.is_exploring_cell()
+                || !self
+                    .calls
+                    .iter()
+                    .any(|call| self.call_reads_skill_content(call)))
         {
             return self.transcript_hyperlink_lines(width);
         }
@@ -214,15 +223,34 @@ impl HistoryCell for ExecCell {
         let mut calls = self.calls.as_slice();
         let mut first_block = true;
         while let Some((call, remaining)) = calls.split_first() {
-            let compact_skill_content = self.call_reads_skill_content(call);
-            let block_len = 1 + remaining
-                .iter()
-                .take_while(|next| self.call_reads_skill_content(next) == compact_skill_content)
-                .count();
+            let workspace_summary = call
+                .workspace_skill_read
+                .as_ref()
+                .and_then(|presentation| presentation.summary());
+            let compact_skill_content =
+                workspace_summary.is_some() || self.call_reads_skill_content(call);
+            let block_len = if workspace_summary.is_some() {
+                1
+            } else {
+                1 + remaining
+                    .iter()
+                    .take_while(|next| {
+                        let next_compact = next
+                            .workspace_skill_read
+                            .as_ref()
+                            .and_then(|presentation| presentation.summary())
+                            .is_some()
+                            || self.call_reads_skill_content(next);
+                        next_compact == compact_skill_content
+                    })
+                    .count()
+            };
             let (block, remaining) = calls.split_at(block_len);
             calls = remaining;
 
-            let mut block_lines = if compact_skill_content {
+            let mut block_lines = if let Some(summary) = workspace_summary {
+                workspace_read_summary_lines(std::slice::from_ref(&summary), width)
+            } else if compact_skill_content {
                 self.exploring_display_lines_for_calls(block, width)
             } else {
                 ExecCell::transcript_lines_for_calls(block, width)
@@ -240,6 +268,35 @@ impl HistoryCell for ExecCell {
     fn raw_lines(&self) -> Vec<Line<'static>> {
         plain_lines(self.transcript_lines(u16::MAX))
     }
+
+    fn has_stable_transcript_height(&self) -> bool {
+        !self
+            .calls
+            .iter()
+            .any(|call| call.workspace_skill_read.is_some())
+    }
+}
+
+fn workspace_read_summary_lines(
+    summaries: &[WorkspaceReadSummary],
+    width: u16,
+) -> Vec<Line<'static>> {
+    let names = summaries
+        .iter()
+        .map(|summary| summary.name.clone().into())
+        .collect::<Vec<Span<'static>>>();
+    let line = Line::from(names);
+    let initial_indent = Line::from(vec!["Read".cyan(), " ".into()]);
+    let subsequent_indent = " ".repeat(initial_indent.width()).into();
+    let mut lines = Vec::new();
+    let wrapped = adaptive_wrap_line(
+        &line,
+        RtOptions::new(width as usize)
+            .initial_indent(initial_indent)
+            .subsequent_indent(subsequent_indent),
+    );
+    push_owned_lines(&wrapped, &mut lines);
+    prefix_lines(lines, "  └ ".dim(), "    ".into())
 }
 
 impl ExecCell {
@@ -827,6 +884,7 @@ mod tests {
             start_time: None,
             duration: None,
             interaction_input: None,
+            workspace_skill_read: None,
         };
 
         let cell = ExecCell::new(call, /*animations_enabled*/ false);
@@ -1065,6 +1123,7 @@ mod tests {
             start_time: None,
             duration: Some(Duration::from_millis(1)),
             interaction_input: None,
+            workspace_skill_read: None,
         };
         let cell = ExecCell::new(call, /*animations_enabled*/ false);
         let rendered = cell
@@ -1093,6 +1152,7 @@ mod tests {
             start_time: None,
             duration: Some(Duration::from_millis(1)),
             interaction_input: None,
+            workspace_skill_read: None,
         };
         let unannotated = ExecCell::new(unannotated_call, /*animations_enabled*/ false)
             .workspace_transcript_hyperlink_lines(/*width*/ 80)
@@ -1123,6 +1183,7 @@ mod tests {
             start_time: None,
             duration: Some(Duration::from_millis(1)),
             interaction_input: None,
+            workspace_skill_read: None,
         };
         let mixed = ExecCell::new(mixed_call, /*animations_enabled*/ false)
             .workspace_transcript_hyperlink_lines(/*width*/ 80)
@@ -1157,6 +1218,7 @@ mod tests {
                 start_time: None,
                 duration: Some(Duration::from_millis(1)),
                 interaction_input: None,
+                workspace_skill_read: None,
             },
             /*animations_enabled*/ false,
         );
@@ -1252,6 +1314,7 @@ mod tests {
                 start_time: None,
                 duration: Some(Duration::from_millis(1)),
                 interaction_input: None,
+                workspace_skill_read: None,
             },
             /*animations_enabled*/ false,
         );
@@ -1305,6 +1368,7 @@ mod tests {
                 start_time: None,
                 duration: Some(Duration::from_millis(1)),
                 interaction_input: None,
+                workspace_skill_read: None,
             },
             /*animations_enabled*/ false,
         );
@@ -1365,6 +1429,7 @@ mod tests {
             start_time: None,
             duration: None,
             interaction_input: None,
+            workspace_skill_read: None,
         };
 
         let cell = ExecCell::new(call, /*animations_enabled*/ false);
@@ -1397,6 +1462,7 @@ mod tests {
             start_time: Some(Instant::now()),
             duration: None,
             interaction_input: None,
+            workspace_skill_read: None,
         };
 
         let cell = ExecCell::new(call, /*animations_enabled*/ false);
@@ -1431,6 +1497,7 @@ mod tests {
             start_time: None,
             duration: None,
             interaction_input: None,
+            workspace_skill_read: None,
         };
 
         let cell = ExecCell::new(call, /*animations_enabled*/ false);
@@ -1468,6 +1535,7 @@ mod tests {
             start_time: None,
             duration: None,
             interaction_input: None,
+            workspace_skill_read: None,
         };
 
         let cell = ExecCell::new(call, /*animations_enabled*/ false);
@@ -1501,6 +1569,7 @@ mod tests {
             start_time: None,
             duration: None,
             interaction_input: None,
+            workspace_skill_read: None,
         };
 
         let cell = ExecCell::new(call, /*animations_enabled*/ false);

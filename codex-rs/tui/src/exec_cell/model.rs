@@ -10,6 +10,8 @@ use std::time::Duration;
 use std::time::Instant;
 
 use super::live_output::LiveCommandOutput;
+use crate::workspace_skill_output::WorkspaceCommandOutcome;
+use crate::workspace_skill_output::WorkspaceSkillReadPresentation;
 use codex_app_server_protocol::CommandExecutionSource as ExecCommandSource;
 use codex_protocol::parse_command::ParsedCommand;
 use itertools::Either;
@@ -70,6 +72,7 @@ pub(crate) struct ExecCall {
     pub(crate) start_time: Option<Instant>,
     pub(crate) duration: Option<Duration>,
     pub(crate) interaction_input: Option<String>,
+    pub(crate) workspace_skill_read: Option<Box<WorkspaceSkillReadPresentation>>,
 }
 
 #[derive(Debug)]
@@ -103,6 +106,7 @@ impl ExecCell {
             start_time: Some(Instant::now()),
             duration: None,
             interaction_input,
+            workspace_skill_read: None,
         };
         if self.is_exploring_cell() && Self::is_exploring_call(&call) {
             self.calls.push(call);
@@ -130,6 +134,39 @@ impl ExecCell {
         call.duration = Some(duration);
         call.start_time = None;
         true
+    }
+
+    pub(crate) fn set_workspace_skill_read(
+        &mut self,
+        call_id: &str,
+        presentation: Option<WorkspaceSkillReadPresentation>,
+    ) {
+        let Some(call) = self
+            .calls
+            .iter_mut()
+            .rev()
+            .find(|call| call.call_id == call_id)
+        else {
+            return;
+        };
+        call.workspace_skill_read = presentation.map(Box::new);
+    }
+
+    pub(crate) fn complete_workspace_skill_read(
+        &mut self,
+        call_id: &str,
+        outcome: WorkspaceCommandOutcome,
+    ) {
+        let Some(presentation) = self
+            .calls
+            .iter_mut()
+            .rev()
+            .find(|call| call.call_id == call_id)
+            .and_then(|call| call.workspace_skill_read.as_mut())
+        else {
+            return;
+        };
+        presentation.set_outcome(outcome);
     }
 
     pub(crate) fn should_flush(&self) -> bool {

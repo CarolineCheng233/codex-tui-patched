@@ -2,6 +2,80 @@ use super::*;
 use pretty_assertions::assert_eq;
 
 #[tokio::test]
+async fn workspace_skill_zsh_pwd_then_sed_compacts_only_workspace_output() {
+    let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+    chat.on_task_started();
+
+    let skill_path = test_path_buf("/tmp/enabled-skill/SKILL.md").abs();
+    chat.set_skills_from_response(&codex_app_server_protocol::SkillsListResponse {
+        data: vec![codex_app_server_protocol::SkillsListEntry {
+            cwd: chat.config.cwd.to_path_buf(),
+            skills: vec![SkillMetadata {
+                name: "demo".to_string(),
+                description: "test skill".to_string(),
+                short_description: None,
+                interface: None,
+                dependencies: None,
+                path: skill_path.clone(),
+                scope: crate::test_support::skill_scope_repo(),
+                enabled: true,
+                plugin_id: None,
+            }],
+            errors: Vec::new(),
+        }],
+    });
+
+    let script = format!("pwd && sed -n '1,240p' {}", skill_path.display());
+    let command = vec!["zsh".to_string(), "-lc".to_string(), script.clone()];
+    let command_actions = codex_shell_command::parse_command::parse_command(&command)
+        .into_iter()
+        .map(|parsed| AppServerCommandAction::from_core_with_cwd(parsed, &chat.config.cwd))
+        .collect();
+    let begin = AppServerThreadItem::CommandExecution {
+        id: "workspace-skill-zsh".to_string(),
+        command: codex_shell_command::parse_command::shlex_join(&command),
+        cwd: chat.config.cwd.clone().into(),
+        process_id: None,
+        plugin_id: None,
+        script_path: None,
+        source: ExecCommandSource::Agent,
+        status: AppServerCommandExecutionStatus::InProgress,
+        command_actions,
+        aggregated_output: None,
+        exit_code: None,
+        duration_ms: None,
+    };
+
+    handle_exec_begin(&mut chat, begin.clone());
+    end_exec(
+        &mut chat,
+        begin,
+        "WORKSPACE_SKILL_CWD_SENTINEL\nWORKSPACE_SKILL_BODY_SENTINEL\n",
+        "",
+        /*exit_code*/ 0,
+    );
+
+    let AppEvent::InsertHistoryCell(cell) = rx.try_recv().expect("completed exec cell") else {
+        panic!("expected completed exec cell");
+    };
+    let display = lines_to_single_string(&cell.display_lines(/*width*/ 80));
+    let transcript = lines_to_single_string(&cell.transcript_lines(/*width*/ 80));
+    let workspace = cell
+        .workspace_transcript_hyperlink_lines(/*width*/ 80)
+        .into_iter()
+        .flat_map(|line| line.line.spans)
+        .map(|span| span.content.into_owned())
+        .collect::<String>();
+
+    assert!(display.contains("WORKSPACE_SKILL_BODY_SENTINEL"));
+    assert!(transcript.contains("WORKSPACE_SKILL_CWD_SENTINEL"));
+    assert!(transcript.contains("WORKSPACE_SKILL_BODY_SENTINEL"));
+    assert!(workspace.contains("Read SKILL.md (demo skill)"));
+    assert!(!workspace.contains("WORKSPACE_SKILL_CWD_SENTINEL"));
+    assert!(!workspace.contains("WORKSPACE_SKILL_BODY_SENTINEL"));
+}
+
+#[tokio::test]
 async fn external_writer_snapshot_freezes_active_command_and_mcp_rows() {
     let mut rendered = Vec::new();
     for active_mcp in [false, true] {
