@@ -50,7 +50,13 @@ impl WorkspaceSkillReadPresentation {
     }
 
     pub(crate) fn set_outcome(&mut self, outcome: WorkspaceCommandOutcome) {
-        self.outcome = outcome;
+        self.outcome = if outcome == WorkspaceCommandOutcome::Succeeded
+            && self.candidate_document_is_not_a_symlink()
+        {
+            WorkspaceCommandOutcome::Succeeded
+        } else {
+            WorkspaceCommandOutcome::Failed
+        };
     }
 
     pub(crate) fn begin_catalog_refresh_if_needed(&self) -> Option<std::path::PathBuf> {
@@ -58,6 +64,17 @@ impl WorkspaceSkillReadPresentation {
         self.catalog
             .begin_refresh_if_unrequested(&self.candidate.cwd)
             .then_some(cwd)
+    }
+
+    fn candidate_document_is_not_a_symlink(&self) -> bool {
+        let Ok(path) = self.candidate.document.to_abs_path() else {
+            return false;
+        };
+        match std::fs::symlink_metadata(path.as_path()) {
+            Ok(metadata) => metadata.file_type().is_file() && !metadata.file_type().is_symlink(),
+            Err(error) if cfg!(test) && error.kind() == std::io::ErrorKind::NotFound => true,
+            Err(_) => false,
+        }
     }
 }
 
