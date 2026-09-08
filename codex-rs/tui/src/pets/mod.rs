@@ -567,7 +567,7 @@ mod tests {
         image::RgbaImage::new(4, 3).save(&frame).unwrap();
         let request = LocalImagePreviewDraw {
             image_id: 0xC100_0000,
-            path: frame.clone(),
+            path: frame,
             x: 2,
             y: 3,
             columns: 16,
@@ -576,7 +576,8 @@ mod tests {
         let mut output = Vec::new();
         let mut state = LocalImagePreviewState::default();
 
-        render_local_image_previews(&mut output, &mut state, &[request.clone()]).unwrap();
+        render_local_image_previews(&mut output, &mut state, std::slice::from_ref(&request))
+            .unwrap();
 
         let first = String::from_utf8(output.clone()).unwrap();
         assert!(first.contains("a=T,t=f,f=100,c=16,r=6,q=2,i=3238002688;"));
