@@ -224,36 +224,6 @@ impl ExecCell {
         self.calls.iter()
     }
 
-    /// Skill instructions are implementation details of an agent turn. Keep
-    /// their command output compact only when every parsed read in this call
-    /// is inside a skill directory identified by an exact, enabled skill-path
-    /// annotation. Mixed calls fail open because their aggregate output cannot
-    /// be attributed to individual parsed commands safely.
-    pub(crate) fn call_reads_skill_content(&self, call: &ExecCall) -> bool {
-        Self::is_exploring_call(call)
-            && call.parsed.iter().all(|parsed| {
-                let ParsedCommand::Read { path, .. } = parsed else {
-                    return false;
-                };
-                self.calls
-                    .iter()
-                    .flat_map(|candidate| &candidate.parsed)
-                    .filter_map(Self::annotated_skill_root)
-                    .any(|root| path.starts_with(root))
-            })
-    }
-
-    fn annotated_skill_root(parsed: &ParsedCommand) -> Option<&std::path::Path> {
-        match parsed {
-            ParsedCommand::Read { name, path, .. }
-                if name.starts_with("SKILL.md (") && name.ends_with(" skill)") =>
-            {
-                path.parent().filter(|root| !root.as_os_str().is_empty())
-            }
-            _ => None,
-        }
-    }
-
     pub(crate) fn append_output(&mut self, call_id: &str, chunk: &str) -> bool {
         if chunk.is_empty() {
             return false;

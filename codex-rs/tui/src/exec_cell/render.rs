@@ -209,13 +209,7 @@ impl HistoryCell for ExecCell {
                 .and_then(|presentation| presentation.summary())
                 .is_some()
         });
-        if !has_workspace_skill_read
-            && (!self.is_exploring_cell()
-                || !self
-                    .calls
-                    .iter()
-                    .any(|call| self.call_reads_skill_content(call)))
-        {
+        if !has_workspace_skill_read {
             return self.transcript_hyperlink_lines(width);
         }
 
@@ -227,21 +221,18 @@ impl HistoryCell for ExecCell {
                 .workspace_skill_read
                 .as_ref()
                 .and_then(|presentation| presentation.summary());
-            let compact_skill_content =
-                workspace_summary.is_some() || self.call_reads_skill_content(call);
+            let compact_skill_content = workspace_summary.is_some();
             let block_len = if workspace_summary.is_some() {
                 1
             } else {
                 1 + remaining
                     .iter()
                     .take_while(|next| {
-                        let next_compact = next
-                            .workspace_skill_read
+                        next.workspace_skill_read
                             .as_ref()
                             .and_then(|presentation| presentation.summary())
                             .is_some()
-                            || self.call_reads_skill_content(next);
-                        next_compact == compact_skill_content
+                            == compact_skill_content
                     })
                     .count()
             };
@@ -250,8 +241,6 @@ impl HistoryCell for ExecCell {
 
             let mut block_lines = if let Some(summary) = workspace_summary {
                 workspace_read_summary_lines(std::slice::from_ref(&summary), width)
-            } else if compact_skill_content {
-                self.exploring_display_lines_for_calls(block, width)
             } else {
                 ExecCell::transcript_lines_for_calls(block, width)
             };
@@ -1106,7 +1095,7 @@ mod tests {
     }
 
     #[test]
-    fn workspace_compacts_skill_instruction_output() {
+    fn workspace_requires_a_catalog_backed_skill_presentation() {
         let call = ExecCall {
             call_id: "call-id".to_string(),
             command: vec!["sed".to_string(), "-n".to_string(), "1,240p".to_string()],
@@ -1133,8 +1122,7 @@ mod tests {
             .map(|span| span.content.into_owned())
             .collect::<String>();
 
-        assert!(rendered.contains("Read SKILL.md"));
-        assert!(!rendered.contains("private skill instruction body"));
+        assert!(rendered.contains("private skill instruction body"));
 
         let unannotated_call = ExecCall {
             call_id: "call-id-2".to_string(),
@@ -1195,7 +1183,7 @@ mod tests {
     }
 
     #[test]
-    fn workspace_compacts_skill_content_per_call_in_mixed_exploring_group() {
+    fn workspace_annotations_do_not_compact_a_mixed_exploring_group() {
         let mut cell = ExecCell::new(
             ExecCall {
                 call_id: "skill-main".to_string(),
@@ -1279,15 +1267,19 @@ mod tests {
             .map(|line| render_line_text(&line.line))
             .join("\n");
 
-        assert!(!rendered.contains("PRIVATE MAIN SKILL BODY"));
-        assert!(!rendered.contains("PRIVATE SKILL REFERENCE BODY"));
+        assert!(rendered.contains("PRIVATE MAIN SKILL BODY"));
+        assert!(rendered.contains("PRIVATE SKILL REFERENCE BODY"));
         assert!(rendered.contains("VISIBLE ORDINARY FILE BODY"));
-        assert!(rendered.contains("Read SKILL.md"));
         assert!(rendered.contains("codex-tools.md"));
 
         insta::assert_snapshot!(rendered, @r###"
-        • Explored
-          └ Read SKILL.md (superpowers:using-superpowers skill), codex-tools.md
+        $ sed -n '1,240p' /tmp/using-superpowers/SKILL.md
+        PRIVATE MAIN SKILL BODY
+        ✓ • 1ms
+
+        $ sed -n '1,240p' /tmp/using-superpowers/references/codex-tools.md
+        PRIVATE SKILL REFERENCE BODY
+        ✓ • 1ms
 
         $ sed -n '1,240p' /tmp/project/README.md
         VISIBLE ORDINARY FILE BODY
@@ -1342,13 +1334,12 @@ mod tests {
             Duration::from_millis(1),
         ));
 
-        assert!(!cell.call_reads_skill_content(&cell.calls[1]));
         let rendered = cell
             .workspace_transcript_hyperlink_lines(/*width*/ 80)
             .into_iter()
             .map(|line| render_line_text(&line.line))
             .join("\n");
-        assert!(!rendered.contains("PRIVATE MAIN SKILL BODY"));
+        assert!(rendered.contains("PRIVATE MAIN SKILL BODY"));
         assert!(rendered.contains("VISIBLE SIBLING FILE BODY"));
 
         let relative = ExecCell::new(
