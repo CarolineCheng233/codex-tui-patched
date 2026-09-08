@@ -2804,6 +2804,7 @@ impl App {
                 {
                     Ok(()) => {
                         self.chat_widget.update_skill_enabled(path, enabled);
+                        self.invalidate_workspace_skill_catalog_view();
                     }
                     Err(err) => {
                         let path_display = path.display();

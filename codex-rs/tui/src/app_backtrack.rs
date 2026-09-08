@@ -420,6 +420,12 @@ impl App {
         )
     }
 
+    pub(crate) fn invalidate_workspace_skill_catalog_view(&mut self) {
+        if let Some(Overlay::Transcript(overlay)) = self.overlay.as_mut() {
+            overlay.invalidate_workspace_catalog_view();
+        }
+    }
+
     /// Handle Enter in overlay backtrack preview: confirm selection and reset state.
     fn overlay_confirm_backtrack(&mut self, tui: &mut tui::Tui) {
         let nth_user_message = self.backtrack.nth_user_message;

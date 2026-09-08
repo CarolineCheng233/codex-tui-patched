@@ -953,7 +953,11 @@ impl App {
         ticket: &[WorkspaceSkillRefreshTicket],
     ) {
         match result {
-            Ok(response) => self.handle_skills_list_response_if_current(response, ticket),
+            Ok(response) => {
+                if self.handle_skills_list_response_if_current(response, ticket) {
+                    self.invalidate_workspace_skill_catalog_view();
+                }
+            }
             Err(err)
                 if self
                     .chat_widget
@@ -962,6 +966,7 @@ impl App {
                 tracing::warn!("{failure_message}: {err:#}");
                 self.chat_widget
                     .add_error_message(format!("{failure_message}: {err:#}"));
+                self.invalidate_workspace_skill_catalog_view();
             }
             Err(_) => {}
         }
@@ -1811,14 +1816,15 @@ impl App {
         &mut self,
         response: SkillsListResponse,
         ticket: &[WorkspaceSkillRefreshTicket],
-    ) {
+    ) -> bool {
         if !self
             .chat_widget
             .handle_skills_list_response_if_current(&response, ticket)
         {
-            return;
+            return false;
         }
         self.handle_skills_list_warnings(&response);
+        true
     }
 
     fn handle_skills_list_warnings(&mut self, response: &SkillsListResponse) {
