@@ -19,6 +19,46 @@ async fn workspace_skill_unrequested_cwd_requests_skills_once() {
 }
 
 #[tokio::test]
+async fn workspace_skill_completion_without_begin_requests_the_catalog() {
+    let (mut chat, _rx, mut op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+    chat.on_task_started();
+
+    let command = vec![
+        "zsh".to_string(),
+        "-lc".to_string(),
+        "pwd && sed -n '1,240p' /tmp/enabled-skill/SKILL.md".to_string(),
+    ];
+    let command_actions = codex_shell_command::parse_command::parse_command(&command)
+        .into_iter()
+        .map(|parsed| AppServerCommandAction::from_core_with_cwd(parsed, &chat.config.cwd))
+        .collect();
+    let cwd = chat.config.cwd.clone();
+    handle_exec_end(
+        &mut chat,
+        AppServerThreadItem::CommandExecution {
+            id: "workspace-skill-completion-only".to_string(),
+            command: codex_shell_command::parse_command::shlex_join(&command),
+            cwd: cwd.into(),
+            process_id: None,
+            plugin_id: None,
+            script_path: None,
+            source: ExecCommandSource::Agent,
+            status: AppServerCommandExecutionStatus::Completed,
+            command_actions,
+            aggregated_output: Some("WORKSPACE_SKILL_BODY_SENTINEL\n".to_string()),
+            exit_code: Some(0),
+            duration_ms: Some(1),
+        },
+    );
+
+    let Op::ListSkills { cwds, force_reload } = op_rx.try_recv().expect("skills refresh") else {
+        panic!("expected ListSkills");
+    };
+    assert_eq!(cwds, vec![chat.config.cwd.to_path_buf()]);
+    assert!(!force_reload);
+}
+
+#[tokio::test]
 async fn workspace_skill_ticket_ignores_skills_for_an_unrequested_cwd() {
     let (mut chat, _rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
     let current_cwd = chat.config.cwd.to_path_buf();

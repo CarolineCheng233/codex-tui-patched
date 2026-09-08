@@ -56,7 +56,7 @@ fn workspace_skill_persisted_command_compacts_only_workspace_output() {
         duration_ms: Some(1),
     };
 
-    let cells = workspace_thread_items_to_transcript_cells(
+    let projection = workspace_thread_items_to_transcript_cells_with_required_skill_cwds(
         None,
         &cwd,
         [item],
@@ -64,6 +64,7 @@ fn workspace_skill_persisted_command_compacts_only_workspace_output() {
         None,
         catalog,
     );
+    let cells = projection.cells;
     assert_eq!(cells.len(), 1);
     let transcript = cells[0]
         .transcript_lines(/*width*/ 80)
@@ -83,4 +84,44 @@ fn workspace_skill_persisted_command_compacts_only_workspace_output() {
     assert!(workspace.contains("Read SKILL.md (demo skill)"));
     assert!(!workspace.contains("WORKSPACE_SKILL_CWD_SENTINEL"));
     assert!(!workspace.contains("WORKSPACE_SKILL_BODY_SENTINEL"));
+}
+
+#[test]
+fn workspace_skill_persisted_command_requests_its_unloaded_cwd() {
+    let cwd = test_path_buf("/tmp/workspace-skill-history-unloaded").abs();
+    let skill_path = test_path_buf("/tmp/enabled-skill/SKILL.md").abs();
+    let command = vec![
+        "zsh".to_string(),
+        "-lc".to_string(),
+        format!("pwd && sed -n '1,240p' {}", skill_path.display()),
+    ];
+    let item = ThreadItem::CommandExecution {
+        id: "persisted-workspace-skill-unloaded".to_string(),
+        plugin_id: None,
+        script_path: None,
+        command: codex_shell_command::parse_command::shlex_join(&command),
+        cwd: cwd.clone().into(),
+        process_id: None,
+        source: CommandExecutionSource::Agent,
+        status: CommandExecutionStatus::Completed,
+        command_actions: codex_shell_command::parse_command::parse_command(&command)
+            .into_iter()
+            .map(|parsed| CommandAction::from_core_with_cwd(parsed, &cwd))
+            .collect(),
+        aggregated_output: Some("WORKSPACE_SKILL_BODY_SENTINEL\n".to_string()),
+        exit_code: Some(0),
+        duration_ms: Some(1),
+    };
+
+    let projection = workspace_thread_items_to_transcript_cells_with_required_skill_cwds(
+        None,
+        &cwd,
+        [item],
+        RawReasoningVisibility::Hidden,
+        None,
+        Arc::new(WorkspaceSkillCatalog::default()),
+    );
+
+    assert_eq!(projection.cells.len(), 1);
+    assert_eq!(projection.required_skill_cwds, vec![cwd.to_path_buf()]);
 }

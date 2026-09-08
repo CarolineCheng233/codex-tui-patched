@@ -419,6 +419,11 @@ impl ChatWidget {
                 (event_command, event_parsed, source, workspace_skill_read)
             }
         };
+        if let Some(cwd) = workspace_skill_read.as_ref().and_then(
+            crate::workspace_skill_output::WorkspaceSkillReadPresentation::begin_catalog_refresh_if_needed,
+        ) {
+            self.submit_op(AppCommand::list_skills(vec![cwd], /*force_reload*/ false));
+        }
         let parsed = self.annotate_skill_reads_in_parsed_cmd(parsed);
         let is_unified_exec_interaction =
             matches!(source, ExecCommandSource::UnifiedExecInteraction);

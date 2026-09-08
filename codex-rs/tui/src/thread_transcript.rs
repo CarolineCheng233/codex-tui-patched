@@ -1,5 +1,6 @@
 //! Render persisted thread turns into history-cell building blocks.
 
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use crate::app_server_session::AppServerSession;
@@ -33,6 +34,11 @@ use ratatui::style::Stylize as _;
 use ratatui::text::Line;
 
 pub(crate) type TranscriptCells = Vec<Arc<dyn HistoryCell>>;
+
+pub(crate) struct WorkspaceTranscriptProjection {
+    pub(crate) cells: TranscriptCells,
+    pub(crate) required_skill_cwds: Vec<PathBuf>,
+}
 
 #[derive(Debug)]
 struct WorkspaceCommandHistoryCell {
@@ -138,25 +144,32 @@ pub(crate) fn thread_items_to_transcript_cells(
         raw_reasoning_visibility,
         config,
         None,
+        None,
     )
 }
 
-pub(crate) fn workspace_thread_items_to_transcript_cells(
+pub(crate) fn workspace_thread_items_to_transcript_cells_with_required_skill_cwds(
     thread_id: Option<ThreadId>,
     cwd: &AbsolutePathBuf,
     items: impl IntoIterator<Item = ThreadItem>,
     raw_reasoning_visibility: RawReasoningVisibility,
     config: Option<&Config>,
     workspace_skill_catalog: Arc<WorkspaceSkillCatalog>,
-) -> TranscriptCells {
-    thread_items_to_transcript_cells_with_workspace_catalog(
+) -> WorkspaceTranscriptProjection {
+    let mut required_skill_cwds = Vec::new();
+    let cells = thread_items_to_transcript_cells_with_workspace_catalog(
         thread_id,
         cwd,
         items,
         raw_reasoning_visibility,
         config,
         Some(workspace_skill_catalog),
-    )
+        Some(&mut required_skill_cwds),
+    );
+    WorkspaceTranscriptProjection {
+        cells,
+        required_skill_cwds,
+    }
 }
 
 fn thread_items_to_transcript_cells_with_workspace_catalog(
@@ -166,6 +179,7 @@ fn thread_items_to_transcript_cells_with_workspace_catalog(
     raw_reasoning_visibility: RawReasoningVisibility,
     config: Option<&Config>,
     workspace_skill_catalog: Option<Arc<WorkspaceSkillCatalog>>,
+    mut required_skill_cwds: Option<&mut Vec<PathBuf>>,
 ) -> TranscriptCells {
     let inline_visualization_context = config.and_then(|config| {
         thread_id.and_then(|thread_id| InlineVisualizationContext::from_config(config, thread_id))
@@ -298,6 +312,13 @@ fn thread_items_to_transcript_cells_with_workspace_catalog(
                         presentation.set_outcome(completion_outcome(status.clone(), exit_code));
                         presentation
                     });
+                if let Some(cwd) = workspace_skill_read
+                    .as_ref()
+                    .and_then(WorkspaceSkillReadPresentation::begin_catalog_refresh_if_needed)
+                    && let Some(required_skill_cwds) = required_skill_cwds.as_deref_mut()
+                {
+                    required_skill_cwds.push(cwd);
+                }
                 let lines = command_execution_fallback_lines(
                     &command,
                     status,

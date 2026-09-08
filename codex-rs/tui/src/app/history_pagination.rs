@@ -10,7 +10,7 @@ use crate::history_cell::UserHistoryCell;
 use crate::pager_overlay::TranscriptHistoryState;
 use crate::thread_transcript::RawReasoningVisibility;
 use crate::thread_transcript::thread_items_to_transcript_cells;
-use crate::thread_transcript::workspace_thread_items_to_transcript_cells;
+use crate::thread_transcript::workspace_thread_items_to_transcript_cells_with_required_skill_cwds;
 use codex_app_server_protocol::ClientRequest;
 use codex_app_server_protocol::ThreadItemsListResponse;
 
@@ -200,7 +200,7 @@ impl App {
             });
             store.turns.splice(0..0, turns);
         }
-        let cells = workspace_thread_items_to_transcript_cells(
+        let projection = workspace_thread_items_to_transcript_cells_with_required_skill_cwds(
             Some(thread_id),
             &cwd,
             items,
@@ -208,6 +208,11 @@ impl App {
             Some(&self.config),
             self.chat_widget.workspace_skill_catalog(),
         );
+        if !projection.required_skill_cwds.is_empty() {
+            self.app_event_tx
+                .list_skills(projection.required_skill_cwds, /*force_reload*/ false);
+        }
+        let cells = projection.cells;
         if self.backtrack.overlay_preview_active {
             self.backtrack.nth_user_message = self.backtrack.nth_user_message.saturating_add(
                 cells
