@@ -40,7 +40,6 @@ use crate::history_cell::SessionInfoCell;
 use crate::history_cell::UserHistoryCell;
 use crate::pager_overlay::Overlay;
 use crate::pager_overlay::TranscriptHistoryState;
-use crate::pager_overlay::TranscriptWorkspaceLayout;
 use crate::render::renderable::Renderable;
 use crate::tui;
 use crate::tui::TuiEvent;
@@ -366,10 +365,8 @@ impl App {
                 let width = frame.area().width.max(1);
                 if t.is_workspace() {
                     let composer = chat_widget.transcript_workspace_bottom_pane();
-                    let layout = TranscriptWorkspaceLayout::new(
-                        frame.area(),
-                        composer.desired_height(width),
-                    );
+                    let layout =
+                        workspace_input::transcript_workspace_layout(chat_widget, frame.area());
                     t.sync_live_tail(layout.transcript.width.max(1), active_key, |w| {
                         chat_widget.active_cell_workspace_transcript_hyperlink_lines(w)
                     });

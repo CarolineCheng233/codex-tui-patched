@@ -2,6 +2,21 @@
 
 use super::*;
 
+/// Computes workspace geometry from the composer state at the instant it is needed.
+///
+/// Input handling cannot reuse the previous frame's rectangle: a draft can change the composer
+/// height before the next frame is rendered.
+pub(super) fn transcript_workspace_layout(
+    chat_widget: &crate::chatwidget::ChatWidget,
+    area: ratatui::layout::Rect,
+) -> crate::pager_overlay::TranscriptWorkspaceLayout {
+    let composer = chat_widget.transcript_workspace_bottom_pane();
+    crate::pager_overlay::TranscriptWorkspaceLayout::new(
+        area,
+        composer.desired_height(area.width.max(1)),
+    )
+}
+
 impl App {
     pub(super) async fn handle_transcript_workspace_event(
         &mut self,
@@ -39,8 +54,11 @@ impl App {
         }
         match event {
             TuiEvent::Key(key_event) => {
+                let transcript_area =
+                    transcript_workspace_layout(&self.chat_widget, tui.terminal.viewport_area)
+                        .transcript;
                 let handled = if let Some(Overlay::Transcript(overlay)) = self.overlay.as_mut() {
-                    overlay.handle_workspace_key(tui, key_event)?
+                    overlay.handle_workspace_key(tui, key_event, transcript_area)?
                 } else {
                     false
                 };
@@ -57,8 +75,11 @@ impl App {
                 self.chat_widget.handle_paste(pasted);
             }
             TuiEvent::Mouse(mouse_event) => {
+                let transcript_area =
+                    transcript_workspace_layout(&self.chat_widget, tui.terminal.viewport_area)
+                        .transcript;
                 if let Some(Overlay::Transcript(overlay)) = self.overlay.as_mut() {
-                    overlay.handle_workspace_mouse(tui, mouse_event)?;
+                    overlay.handle_workspace_mouse(tui, mouse_event, transcript_area)?;
                 }
             }
             event @ (TuiEvent::Draw

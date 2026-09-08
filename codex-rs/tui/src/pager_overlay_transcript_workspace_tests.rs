@@ -44,6 +44,7 @@ async fn workspace_keeps_ctrl_c_available_to_the_existing_composer() {
             .handle_workspace_key(
                 &mut tui,
                 KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL),
+                Rect::new(0, 0, 80, 24),
             )
             .expect("workspace key routing")
     );
@@ -69,6 +70,7 @@ async fn workspace_wheel_scrolls_only_the_transcript() {
                     row: 0,
                     modifiers: KeyModifiers::NONE,
                 },
+                Rect::new(0, 0, 80, 24),
             )
             .expect("workspace mouse routing")
     );
@@ -84,6 +86,7 @@ async fn workspace_wheel_scrolls_only_the_transcript() {
                     row: 0,
                     modifiers: KeyModifiers::NONE,
                 },
+                Rect::new(0, 0, 80, 24),
             )
             .expect("workspace mouse routing")
     );
@@ -138,6 +141,118 @@ fn turn_state_folds_one_user_turn_and_preserves_its_selection() {
 }
 
 #[test]
+fn workspace_bottom_append_selects_the_new_user_turn() {
+    let cells = vec![
+        Arc::new(UserHistoryCell {
+            message: "first prompt".into(),
+            text_elements: Vec::new(),
+            local_image_paths: Vec::new(),
+            remote_image_urls: Vec::new(),
+        }) as Arc<dyn crate::history_cell::HistoryCell>,
+        Arc::new(PlainHistoryCell::new(vec![Line::from("first reply")]))
+            as Arc<dyn crate::history_cell::HistoryCell>,
+    ];
+    let mut overlay =
+        TranscriptOverlay::new_workspace(cells, crate::keymap::RuntimeKeymap::defaults().pager);
+    overlay.view.scroll_offset = usize::MAX;
+
+    overlay.insert_cell(Arc::new(UserHistoryCell {
+        message: "second prompt".into(),
+        text_elements: Vec::new(),
+        local_image_paths: Vec::new(),
+        remote_image_urls: Vec::new(),
+    }));
+
+    assert_eq!(overlay.workspace_turns.selected_turn_start(), Some(2));
+}
+
+#[tokio::test]
+async fn workspace_bottom_append_preserves_a_manually_selected_turn() -> std::io::Result<()> {
+    let cells = vec![
+        Arc::new(UserHistoryCell {
+            message: "first prompt".into(),
+            text_elements: Vec::new(),
+            local_image_paths: Vec::new(),
+            remote_image_urls: Vec::new(),
+        }) as Arc<dyn crate::history_cell::HistoryCell>,
+        Arc::new(PlainHistoryCell::new(vec![Line::from("first reply")]))
+            as Arc<dyn crate::history_cell::HistoryCell>,
+        Arc::new(UserHistoryCell {
+            message: "second prompt".into(),
+            text_elements: Vec::new(),
+            local_image_paths: Vec::new(),
+            remote_image_urls: Vec::new(),
+        }) as Arc<dyn crate::history_cell::HistoryCell>,
+    ];
+    let mut overlay =
+        TranscriptOverlay::new_workspace(cells, crate::keymap::RuntimeKeymap::defaults().pager);
+    let mut tui = crate::tui::test_support::make_test_tui().expect("test tui");
+    overlay.view.scroll_offset = usize::MAX;
+
+    overlay.handle_workspace_key(
+        &mut tui,
+        KeyEvent::new(KeyCode::Up, KeyModifiers::ALT),
+        Rect::new(0, 0, 80, 10),
+    )?;
+    overlay.insert_cell(Arc::new(UserHistoryCell {
+        message: "third prompt".into(),
+        text_elements: Vec::new(),
+        local_image_paths: Vec::new(),
+        remote_image_urls: Vec::new(),
+    }));
+
+    assert_eq!(overlay.workspace_turns.selected_turn_start(), Some(0));
+    Ok(())
+}
+
+#[tokio::test]
+async fn workspace_scroll_restores_follow_viewport_before_a_bottom_append() -> std::io::Result<()> {
+    let cells = vec![
+        Arc::new(UserHistoryCell {
+            message: "first prompt".into(),
+            text_elements: Vec::new(),
+            local_image_paths: Vec::new(),
+            remote_image_urls: Vec::new(),
+        }) as Arc<dyn crate::history_cell::HistoryCell>,
+        Arc::new(UserHistoryCell {
+            message: "second prompt".into(),
+            text_elements: Vec::new(),
+            local_image_paths: Vec::new(),
+            remote_image_urls: Vec::new(),
+        }) as Arc<dyn crate::history_cell::HistoryCell>,
+    ];
+    let mut overlay =
+        TranscriptOverlay::new_workspace(cells, crate::keymap::RuntimeKeymap::defaults().pager);
+    let mut tui = crate::tui::test_support::make_test_tui().expect("test tui");
+    overlay.view.scroll_offset = usize::MAX;
+
+    overlay.handle_workspace_key(
+        &mut tui,
+        KeyEvent::new(KeyCode::Up, KeyModifiers::ALT),
+        Rect::new(0, 0, 80, 10),
+    )?;
+    overlay.handle_workspace_mouse(
+        &mut tui,
+        MouseEvent {
+            kind: MouseEventKind::ScrollDown,
+            column: 0,
+            row: 0,
+            modifiers: KeyModifiers::NONE,
+        },
+        Rect::new(0, 0, 80, 10),
+    )?;
+    overlay.insert_cell(Arc::new(UserHistoryCell {
+        message: "third prompt".into(),
+        text_elements: Vec::new(),
+        local_image_paths: Vec::new(),
+        remote_image_urls: Vec::new(),
+    }));
+
+    assert_eq!(overlay.workspace_turns.selected_turn_start(), Some(2));
+    Ok(())
+}
+
+#[test]
 fn workspace_scroll_targets_the_turn_above_the_bottom_bar() {
     let cells = vec![
         Arc::new(UserHistoryCell {
@@ -170,6 +285,81 @@ fn workspace_scroll_targets_the_turn_above_the_bottom_bar() {
     assert!(overlay.workspace_turns.collapse_selected(&overlay.cells));
     assert!(overlay.workspace_turns.is_collapsed(0));
     assert!(!overlay.workspace_turns.is_collapsed(2));
+}
+
+#[tokio::test]
+async fn workspace_page_up_targets_the_turn_in_the_transcript_area() -> std::io::Result<()> {
+    let cells = vec![
+        Arc::new(UserHistoryCell {
+            message: "first prompt".into(),
+            text_elements: Vec::new(),
+            local_image_paths: Vec::new(),
+            remote_image_urls: Vec::new(),
+        }) as Arc<dyn crate::history_cell::HistoryCell>,
+        Arc::new(PlainHistoryCell::new(vec![Line::from("first reply")]))
+            as Arc<dyn crate::history_cell::HistoryCell>,
+        Arc::new(UserHistoryCell {
+            message: "second prompt".into(),
+            text_elements: Vec::new(),
+            local_image_paths: Vec::new(),
+            remote_image_urls: Vec::new(),
+        }) as Arc<dyn crate::history_cell::HistoryCell>,
+        Arc::new(PlainHistoryCell::new(vec![Line::from("second reply")]))
+            as Arc<dyn crate::history_cell::HistoryCell>,
+    ];
+    let mut overlay =
+        TranscriptOverlay::new_workspace(cells, crate::keymap::RuntimeKeymap::defaults().pager);
+    let mut tui = crate::tui::test_support::make_test_tui().expect("test tui");
+    let layout =
+        TranscriptWorkspaceLayout::new(Rect::new(0, 0, 80, 9), /* composer_height */ 3);
+    overlay.view.scroll_offset = 1;
+
+    overlay.handle_workspace_key(&mut tui, KeyEvent::from(KeyCode::PageUp), layout.transcript)?;
+
+    assert_eq!(overlay.workspace_turns.selected_turn_start(), Some(0));
+    Ok(())
+}
+
+#[tokio::test]
+async fn workspace_wheel_targets_the_turn_in_the_transcript_area() -> std::io::Result<()> {
+    let cells = vec![
+        Arc::new(UserHistoryCell {
+            message: "first prompt".into(),
+            text_elements: Vec::new(),
+            local_image_paths: Vec::new(),
+            remote_image_urls: Vec::new(),
+        }) as Arc<dyn crate::history_cell::HistoryCell>,
+        Arc::new(PlainHistoryCell::new(vec![Line::from("first reply")]))
+            as Arc<dyn crate::history_cell::HistoryCell>,
+        Arc::new(UserHistoryCell {
+            message: "second prompt".into(),
+            text_elements: Vec::new(),
+            local_image_paths: Vec::new(),
+            remote_image_urls: Vec::new(),
+        }) as Arc<dyn crate::history_cell::HistoryCell>,
+        Arc::new(PlainHistoryCell::new(vec![Line::from("second reply")]))
+            as Arc<dyn crate::history_cell::HistoryCell>,
+    ];
+    let mut overlay =
+        TranscriptOverlay::new_workspace(cells, crate::keymap::RuntimeKeymap::defaults().pager);
+    let mut tui = crate::tui::test_support::make_test_tui().expect("test tui");
+    let layout =
+        TranscriptWorkspaceLayout::new(Rect::new(0, 0, 80, 9), /* composer_height */ 3);
+    overlay.view.scroll_offset = 3;
+
+    overlay.handle_workspace_mouse(
+        &mut tui,
+        MouseEvent {
+            kind: MouseEventKind::ScrollUp,
+            column: 0,
+            row: 0,
+            modifiers: KeyModifiers::NONE,
+        },
+        layout.transcript,
+    )?;
+
+    assert_eq!(overlay.workspace_turns.selected_turn_start(), Some(0));
+    Ok(())
 }
 
 #[test]
@@ -259,10 +449,18 @@ async fn workspace_turn_keys_select_collapse_and_expand_a_whole_turn() -> std::i
         TranscriptOverlay::new_workspace(cells, crate::keymap::RuntimeKeymap::defaults().pager);
     let mut tui = crate::tui::test_support::make_test_tui().expect("test tui");
 
-    overlay.handle_workspace_key(&mut tui, KeyEvent::new(KeyCode::Up, KeyModifiers::ALT))?;
+    overlay.handle_workspace_key(
+        &mut tui,
+        KeyEvent::new(KeyCode::Up, KeyModifiers::ALT),
+        Rect::new(0, 0, 72, 10),
+    )?;
     assert_eq!(overlay.workspace_turns.selected_turn_start(), Some(0));
 
-    overlay.handle_workspace_key(&mut tui, KeyEvent::new(KeyCode::Left, KeyModifiers::ALT))?;
+    overlay.handle_workspace_key(
+        &mut tui,
+        KeyEvent::new(KeyCode::Left, KeyModifiers::ALT),
+        Rect::new(0, 0, 72, 10),
+    )?;
     assert!(overlay.workspace_turns.is_collapsed(0));
     assert!(overlay.workspace_turns.is_cell_hidden(1));
 
@@ -277,7 +475,11 @@ async fn workspace_turn_keys_select_collapse_and_expand_a_whole_turn() -> std::i
     assert!(rendered.contains("1 hidden transcript item(s)"));
     assert!(!rendered.contains("first reply"));
 
-    overlay.handle_workspace_key(&mut tui, KeyEvent::new(KeyCode::Right, KeyModifiers::ALT))?;
+    overlay.handle_workspace_key(
+        &mut tui,
+        KeyEvent::new(KeyCode::Right, KeyModifiers::ALT),
+        Rect::new(0, 0, 72, 10),
+    )?;
     assert!(!overlay.workspace_turns.is_collapsed(0));
     Ok(())
 }

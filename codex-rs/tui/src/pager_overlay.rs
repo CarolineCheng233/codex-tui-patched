@@ -73,6 +73,7 @@ use transcript_workspace::TranscriptTurnState;
 pub(crate) use transcript_workspace::TranscriptWorkspaceLayout;
 use transcript_workspace::WorkspaceCellLayout;
 use transcript_workspace::WorkspaceLayoutIndex;
+use transcript_workspace::WorkspaceTargetMode;
 use transcript_workspace::WorkspaceTurnLayout;
 
 pub(crate) enum Overlay {
@@ -340,6 +341,36 @@ impl PagerView {
     }
 
     fn handle_key_event(&mut self, tui: &mut tui::Tui, key_event: KeyEvent) -> Result<()> {
+        let viewport_area = tui.terminal.viewport_area;
+        self.handle_key_event_with_viewport(
+            tui,
+            key_event,
+            viewport_area,
+            self.page_height(viewport_area),
+        )
+    }
+
+    /// Handles navigation for a caller that renders the pager into a sub-area of the terminal.
+    ///
+    /// The workspace must use the current sub-area height rather than the last full-terminal
+    /// height because the composer can change size before the next draw.
+    fn handle_key_event_in_area(
+        &mut self,
+        tui: &mut tui::Tui,
+        key_event: KeyEvent,
+        viewport_area: Rect,
+    ) -> Result<()> {
+        let page_height = self.content_area(viewport_area).height as usize;
+        self.handle_key_event_with_viewport(tui, key_event, viewport_area, page_height)
+    }
+
+    fn handle_key_event_with_viewport(
+        &mut self,
+        tui: &mut tui::Tui,
+        key_event: KeyEvent,
+        viewport_area: Rect,
+        page_height: usize,
+    ) -> Result<()> {
         match key_event {
             e if self.keymap.scroll_up.is_pressed(e) => {
                 self.scroll_offset = self.scroll_offset.saturating_sub(1);
@@ -348,20 +379,18 @@ impl PagerView {
                 self.scroll_offset = self.scroll_offset.saturating_add(1);
             }
             e if self.keymap.page_up.is_pressed(e) => {
-                let page_height = self.page_height(tui.terminal.viewport_area);
                 self.scroll_offset = self.scroll_offset.saturating_sub(page_height);
             }
             e if self.keymap.page_down.is_pressed(e) => {
-                let page_height = self.page_height(tui.terminal.viewport_area);
                 self.scroll_offset = self.scroll_offset.saturating_add(page_height);
             }
             e if self.keymap.half_page_down.is_pressed(e) => {
-                let area = self.content_area(tui.terminal.viewport_area);
+                let area = self.content_area(viewport_area);
                 let half_page = (area.height as usize).saturating_add(1) / 2;
                 self.scroll_offset = self.scroll_offset.saturating_add(half_page);
             }
             e if self.keymap.half_page_up.is_pressed(e) => {
-                let area = self.content_area(tui.terminal.viewport_area);
+                let area = self.content_area(viewport_area);
                 let half_page = (area.height as usize).saturating_add(1) / 2;
                 self.scroll_offset = self.scroll_offset.saturating_sub(half_page);
             }
@@ -530,10 +559,11 @@ pub(crate) struct TranscriptOverlay {
     is_done: bool,
     mode: TranscriptMode,
     workspace_turns: TranscriptTurnState,
+    workspace_target_mode: WorkspaceTargetMode,
     local_image_previews_enabled: bool,
     workspace_target: Rc<TargetCell<Option<usize>>>,
     /// Width-keyed physical layout used for O(log n) turn targeting while scrolling.
-    workspace_layout_index: Option<WorkspaceLayoutIndex>,
+    workspace_layout_index: Option<Box<WorkspaceLayoutIndex>>,
 }
 
 const WORKSPACE_WHEEL_SCROLL_ROWS: usize = 3;
@@ -605,6 +635,7 @@ impl TranscriptOverlay {
             is_done: false,
             mode,
             workspace_turns,
+            workspace_target_mode: WorkspaceTargetMode::FollowViewport,
             local_image_previews_enabled: false,
             workspace_target,
             workspace_layout_index: None,
@@ -647,7 +678,7 @@ impl TranscriptOverlay {
         {
             return;
         }
-        self.workspace_layout_index = Some(self.build_workspace_layout_index(width));
+        self.workspace_layout_index = Some(Box::new(self.build_workspace_layout_index(width)));
         // The cached pager height may belong to a previous width or fold state. Until the next
         // draw recomputes the live-tail-inclusive height, use the freshly built committed layout.
         self.view.last_rendered_height = None;
@@ -723,17 +754,19 @@ impl TranscriptOverlay {
         if placeholder {
             return height;
         }
-        height.saturating_add(
-            (!cell.is_stream_continuation() && index > 0)
-                .then_some(1)
-                .unwrap_or(0),
-        )
+        let inset = if !cell.is_stream_continuation() && index > 0 {
+            1
+        } else {
+            0
+        };
+        height.saturating_add(inset)
     }
 
     pub(crate) fn handle_workspace_key(
         &mut self,
         tui: &mut tui::Tui,
         key_event: KeyEvent,
+        transcript_area: Rect,
     ) -> Result<bool> {
         if !self.is_workspace() {
             return Ok(false);
@@ -756,6 +789,9 @@ impl TranscriptOverlay {
                 _ => false,
             };
             if changed {
+                if matches!(key_event.code, KeyCode::Up | KeyCode::Down) {
+                    self.workspace_target_mode = WorkspaceTargetMode::Manual;
+                }
                 self.rebuild_workspace_turn_renderables();
                 tui.frame_requester()
                     .schedule_frame_in(crate::tui::TARGET_FRAME_INTERVAL);
@@ -763,8 +799,9 @@ impl TranscriptOverlay {
             return Ok(true);
         }
         if self.workspace_navigation_key(key_event) {
-            self.view.handle_key_event(tui, key_event)?;
-            self.sync_workspace_turn_to_viewport(tui.terminal.viewport_area);
+            self.view
+                .handle_key_event_in_area(tui, key_event, transcript_area)?;
+            self.sync_workspace_turn_to_viewport(transcript_area);
             return Ok(true);
         }
         Ok(false)
@@ -775,6 +812,7 @@ impl TranscriptOverlay {
         &mut self,
         tui: &mut tui::Tui,
         mouse_event: MouseEvent,
+        transcript_area: Rect,
     ) -> Result<bool> {
         if !self.is_workspace() {
             return Ok(false);
@@ -794,7 +832,7 @@ impl TranscriptOverlay {
             }
             _ => return Ok(false),
         }
-        self.sync_workspace_turn_to_viewport(tui.terminal.viewport_area);
+        self.sync_workspace_turn_to_viewport(transcript_area);
         tui.frame_requester()
             .schedule_frame_in(crate::tui::TARGET_FRAME_INTERVAL);
         Ok(true)
@@ -812,6 +850,7 @@ impl TranscriptOverlay {
         if !self.is_workspace() {
             return;
         }
+        self.workspace_target_mode = WorkspaceTargetMode::FollowViewport;
         let content = self.view.content_area(area);
         if content.width == 0 || content.height == 0 {
             return;
@@ -994,6 +1033,7 @@ impl TranscriptOverlay {
     /// insertion to preserve the "follow along" behavior.
     pub(crate) fn insert_cell(&mut self, cell: Arc<dyn HistoryCell>) {
         let follow_bottom = self.view.is_scrolled_to_bottom();
+        let appended_user_turn = cell.as_any().is::<UserHistoryCell>();
         let tail_renderable = self.take_live_tail_renderable();
         if !self.is_workspace() {
             let had_prior_cells = !self.cells.is_empty();
@@ -1033,6 +1073,14 @@ impl TranscriptOverlay {
         }
         self.cells.push(cell);
         self.workspace_turns.refresh_after_append(&self.cells);
+        if follow_bottom
+            && appended_user_turn
+            && self.workspace_target_mode == WorkspaceTargetMode::FollowViewport
+            && self.workspace_turns.select_latest_turn()
+        {
+            self.workspace_target
+                .set(self.workspace_turns.selected_turn_start());
+        }
         self.rebuild_renderables(tail_renderable);
         if follow_bottom {
             self.view.scroll_offset = usize::MAX;
@@ -1107,6 +1155,7 @@ impl TranscriptOverlay {
         self.cells = cells;
         if self.is_workspace() {
             self.workspace_turns.reset(&self.cells);
+            self.workspace_target_mode = WorkspaceTargetMode::FollowViewport;
         }
         if self
             .highlight_cell
@@ -1153,6 +1202,7 @@ impl TranscriptOverlay {
                 .splice(clamped_start..clamped_end, std::iter::once(consolidated));
             if self.is_workspace() {
                 self.workspace_turns.reset(&self.cells);
+                self.workspace_target_mode = WorkspaceTargetMode::FollowViewport;
             }
             if self
                 .highlight_cell

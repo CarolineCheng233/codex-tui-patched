@@ -30,6 +30,15 @@ impl TranscriptMode {
     }
 }
 
+/// Records whether the current fold target follows the visible transcript or was chosen directly
+/// with the turn-selection shortcuts.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(super) enum WorkspaceTargetMode {
+    #[default]
+    FollowViewport,
+    Manual,
+}
+
 /// Cached physical layout for one committed cell in the workspace transcript.
 ///
 /// `top` is relative to the transcript content area (below the workspace header). Keeping the
@@ -139,6 +148,13 @@ impl TranscriptTurnState {
         };
         self.selected_turn = Some(*next);
         true
+    }
+
+    pub(super) fn select_latest_turn(&mut self) -> bool {
+        let Some(latest) = self.turn_starts.last().copied() else {
+            return false;
+        };
+        self.select_turn_start(latest)
     }
 
     pub(super) fn collapse_selected(&mut self, cells: &[Arc<dyn HistoryCell>]) -> bool {
