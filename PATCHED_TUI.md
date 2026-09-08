@@ -4,23 +4,26 @@
 
 ## 位置与启动
 
-镜像仓库位于 `/Users/chy/projects/codex-tui-patched`，定制功能工作树位于：
-
-```sh
-/Users/chy/projects/.worktrees/codex-tui-workspace
-```
+正式仓库和日常使用目录为 `/Users/chy/projects/codex-tui-patched`。此前的
+`/Users/chy/projects/.worktrees/codex-tui-workspace` 仅作为隔离回退副本保留。
 
 首次启动或源码更新后，构建独立的本地包。构建器会从系统已安装 Codex 的同目录复制官方 `codex-code-mode-host`，使本地包完整而不覆盖系统安装：
 
 ```sh
-cd "/Users/chy/projects/.worktrees/codex-tui-workspace"
+cd "/Users/chy/projects/codex-tui-patched"
 ./scripts/build-patched-tui.sh
 ```
 
 之后始终通过下面的启动器运行；它只执行该工作树生成的包，绝不会覆盖系统的 `codex`：
 
 ```sh
-"/Users/chy/projects/.worktrees/codex-tui-workspace/scripts/codex-tui.sh"
+"/Users/chy/projects/codex-tui-patched/scripts/codex-tui.sh"
+```
+
+日常也可以从任意目录直接运行全局命令：
+
+```sh
+codex-tui
 ```
 
 生成包的位置是 `codex-rs/target/codex-tui-package`。构建器采用优化后的 release 二进制，避免调试二进制的巨大磁盘占用；不要直接运行 `target/debug/codex`：它不保证携带 Code Mode host。构建器会把实际 host 来源记入包内的 `CODE_MODE_HOST_SOURCE`；若官方 Codex 不在 `PATH` 中，可在构建时显式设置 `CODEX_CODE_MODE_HOST_BIN`。
@@ -60,7 +63,7 @@ transcript_workspace = true
 1. 先构建并启动本地包：
 
    ```sh
-   cd "/Users/chy/projects/.worktrees/codex-tui-workspace"
+   cd "/Users/chy/projects/codex-tui-patched"
    ./scripts/build-patched-tui.sh
    ./scripts/codex-tui.sh --version
    ```
@@ -73,7 +76,7 @@ transcript_workspace = true
 6. 运行自动验收：
 
    ```sh
-   cd "/Users/chy/projects/.worktrees/codex-tui-workspace"
+   cd "/Users/chy/projects/codex-tui-patched"
    ./scripts/verify-patched-tui.sh
    ```
 
