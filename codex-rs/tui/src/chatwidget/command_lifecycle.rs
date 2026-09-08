@@ -446,6 +446,7 @@ impl ChatWidget {
 
         // Unified exec interaction rows intentionally hide command output text in the exec cell and
         // instead render the interaction-specific content elsewhere in the UI.
+        let workspace_output = aggregated_output.clone();
         let output = if is_unified_exec_interaction {
             CommandOutput::new(exit_code, String::new())
         } else {
@@ -461,7 +462,11 @@ impl ChatWidget {
                     .and_then(|c| c.as_any_mut().downcast_mut::<ExecCell>())
                 {
                     let completed = cell.complete_call(&id, output, duration);
-                    cell.complete_workspace_skill_read(&id, workspace_outcome);
+                    cell.complete_workspace_skill_read(
+                        &id,
+                        workspace_outcome,
+                        Some(&workspace_output),
+                    );
                     debug_assert!(completed, "active exec cell should contain {id}");
                     if cell.should_flush() {
                         self.flush_active_cell();
@@ -482,7 +487,11 @@ impl ChatWidget {
                 );
                 orphan.set_workspace_skill_read(&id, workspace_skill_read);
                 let completed = orphan.complete_call(&id, output, duration);
-                orphan.complete_workspace_skill_read(&id, workspace_outcome);
+                orphan.complete_workspace_skill_read(
+                    &id,
+                    workspace_outcome,
+                    Some(&workspace_output),
+                );
                 debug_assert!(completed, "new orphan exec cell should contain {id}");
                 self.transcript.needs_final_message_separator = true;
                 self.app_event_tx
@@ -501,7 +510,7 @@ impl ChatWidget {
                 );
                 cell.set_workspace_skill_read(&id, workspace_skill_read);
                 let completed = cell.complete_call(&id, output, duration);
-                cell.complete_workspace_skill_read(&id, workspace_outcome);
+                cell.complete_workspace_skill_read(&id, workspace_outcome, Some(&workspace_output));
                 debug_assert!(completed, "new exec cell should contain {id}");
                 if cell.should_flush() {
                     self.add_to_history(cell);

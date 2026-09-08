@@ -156,6 +156,7 @@ impl ExecCell {
         &mut self,
         call_id: &str,
         outcome: WorkspaceCommandOutcome,
+        aggregated_output: Option<&str>,
     ) {
         let Some(presentation) = self
             .calls
@@ -166,7 +167,7 @@ impl ExecCell {
         else {
             return;
         };
-        presentation.set_outcome(outcome);
+        presentation.set_outcome(outcome, aggregated_output);
     }
 
     pub(crate) fn should_flush(&self) -> bool {

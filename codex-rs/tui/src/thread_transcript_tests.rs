@@ -49,9 +49,10 @@ fn workspace_skill_persisted_command_compacts_only_workspace_output() {
             .into_iter()
             .map(|parsed| CommandAction::from_core_with_cwd(parsed, &cwd))
             .collect(),
-        aggregated_output: Some(
-            "WORKSPACE_SKILL_CWD_SENTINEL\nWORKSPACE_SKILL_BODY_SENTINEL\n".to_string(),
-        ),
+        aggregated_output: Some(format!(
+            "{}\nWORKSPACE_SKILL_CWD_SENTINEL\nWORKSPACE_SKILL_BODY_SENTINEL\n",
+            cwd.as_path().display()
+        )),
         exit_code: Some(0),
         duration_ms: Some(1),
     };

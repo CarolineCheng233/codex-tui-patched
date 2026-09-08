@@ -45,6 +45,7 @@ fn catalog_invalidation_rejects_a_response_from_its_previous_ticket() {
             document: PathUri::from_abs_path(&skill_path),
             filename: "SKILL.md".to_string(),
             cwd,
+            requires_pwd_output: false,
         }),
         None
     );
@@ -76,11 +77,43 @@ fn completed_read_of_a_skill_path_replaced_by_a_symlink_stays_full() {
             document: PathUri::from_abs_path(&skill_path),
             filename: "SKILL.md".to_string(),
             cwd: PathUri::from_abs_path(&cwd_path),
+            requires_pwd_output: false,
         },
         outcome: WorkspaceCommandOutcome::Pending,
         catalog,
     };
-    presentation.set_outcome(WorkspaceCommandOutcome::Succeeded);
+    presentation.set_outcome(WorkspaceCommandOutcome::Succeeded, None);
+
+    assert_eq!(presentation.summary(), None);
+}
+
+#[test]
+fn shell_candidate_with_output_before_pwd_stays_full() {
+    let cwd_path = test_path_buf("/tmp/workspace-skill-shell-output").abs();
+    let skill_path = test_path_buf("/tmp/enabled-skill/SKILL.md").abs();
+    let catalog = Arc::new(WorkspaceSkillCatalog::default());
+    catalog.sync_response(&SkillsListResponse {
+        data: vec![SkillsListEntry {
+            cwd: cwd_path.to_path_buf(),
+            skills: vec![skill_metadata(skill_path.clone())],
+            errors: Vec::new(),
+        }],
+    });
+    let mut presentation = WorkspaceSkillReadPresentation {
+        candidate: WorkspaceSkillReadCandidate {
+            document: PathUri::from_abs_path(&skill_path),
+            filename: "SKILL.md".to_string(),
+            cwd: PathUri::from_abs_path(&cwd_path),
+            requires_pwd_output: true,
+        },
+        outcome: WorkspaceCommandOutcome::Pending,
+        catalog,
+    };
+
+    presentation.set_outcome(
+        WorkspaceCommandOutcome::Succeeded,
+        Some("zsh startup output\n/tmp/workspace-skill-shell-output\nskill body\n"),
+    );
 
     assert_eq!(presentation.summary(), None);
 }

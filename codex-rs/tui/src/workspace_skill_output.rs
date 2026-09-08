@@ -5,6 +5,7 @@
 //! shape, a successful completion, and a loaded enabled-skill catalog all agree.
 
 use std::collections::HashMap;
+use std::io::Read;
 use std::sync::Arc;
 use std::sync::RwLock;
 
@@ -14,6 +15,8 @@ use codex_app_server_protocol::SkillsListResponse;
 use codex_protocol::parse_command::ParsedCommand;
 use codex_skills::ImplicitSkillAccess;
 use codex_utils_path_uri::PathUri;
+use sha2::Digest;
+use sha2::Sha256;
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub(crate) enum WorkspaceCommandOutcome {
@@ -33,6 +36,7 @@ struct WorkspaceSkillReadCandidate {
     document: PathUri,
     filename: String,
     cwd: PathUri,
+    requires_pwd_output: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -49,9 +53,14 @@ impl WorkspaceSkillReadPresentation {
             .flatten()
     }
 
-    pub(crate) fn set_outcome(&mut self, outcome: WorkspaceCommandOutcome) {
+    pub(crate) fn set_outcome(
+        &mut self,
+        outcome: WorkspaceCommandOutcome,
+        aggregated_output: Option<&str>,
+    ) {
         self.outcome = if outcome == WorkspaceCommandOutcome::Succeeded
-            && self.candidate_document_is_not_a_symlink()
+            && self.catalog.matches_current_document(&self.candidate)
+            && self.output_begins_with_pwd(aggregated_output)
         {
             WorkspaceCommandOutcome::Succeeded
         } else {
@@ -66,21 +75,23 @@ impl WorkspaceSkillReadPresentation {
             .then_some(cwd)
     }
 
-    fn candidate_document_is_not_a_symlink(&self) -> bool {
-        let Ok(path) = self.candidate.document.to_abs_path() else {
+    fn output_begins_with_pwd(&self, aggregated_output: Option<&str>) -> bool {
+        if !self.candidate.requires_pwd_output {
+            return true;
+        }
+        let Ok(cwd) = self.candidate.cwd.to_abs_path() else {
             return false;
         };
-        match std::fs::symlink_metadata(path.as_path()) {
-            Ok(metadata) => metadata.file_type().is_file() && !metadata.file_type().is_symlink(),
-            Err(error) if cfg!(test) && error.kind() == std::io::ErrorKind::NotFound => true,
-            Err(_) => false,
-        }
+        aggregated_output
+            .and_then(|output| output.lines().next())
+            .is_some_and(|line| line == cwd.as_path().display().to_string())
     }
 }
 
 #[derive(Clone, Debug)]
 struct WorkspaceSkillRoot {
     document: PathUri,
+    fingerprint: [u8; 32],
     name: String,
 }
 
@@ -250,6 +261,24 @@ impl WorkspaceSkillCatalog {
         })
     }
 
+    fn matches_current_document(&self, candidate: &WorkspaceSkillReadCandidate) -> bool {
+        let Some(fingerprint) = fingerprint_for_uri(&candidate.document) else {
+            return false;
+        };
+        let Ok(entries) = self.entries.read() else {
+            return false;
+        };
+        let Some(entry) = entries.get(&candidate.cwd) else {
+            return false;
+        };
+        let WorkspaceCatalogState::Ready(roots) = &entry.state else {
+            return false;
+        };
+        roots
+            .iter()
+            .any(|root| root.document == candidate.document && root.fingerprint == fingerprint)
+    }
+
     fn is_current(
         entries: &HashMap<PathUri, WorkspaceSkillCatalogEntry>,
         ticket: &WorkspaceSkillRefreshTicket,
@@ -278,8 +307,10 @@ impl WorkspaceSkillCatalog {
 impl WorkspaceSkillRoot {
     fn from_skill(skill: &SkillMetadata) -> Self {
         let document = PathUri::from_abs_path(&skill.path);
+        let fingerprint = fingerprint_for_path(skill.path.as_path()).unwrap_or_default();
         Self {
             document,
+            fingerprint,
             name: skill.name.clone(),
         }
     }
@@ -346,10 +377,40 @@ pub(crate) fn classify_workspace_skill_read(
             filename: document.basename()?,
             document,
             cwd,
+            requires_pwd_output: shell_read,
         },
         outcome: WorkspaceCommandOutcome::Pending,
         catalog,
     })
+}
+
+fn fingerprint_for_uri(uri: &PathUri) -> Option<[u8; 32]> {
+    let path = uri.to_abs_path().ok()?;
+    fingerprint_for_path(path.as_path())
+}
+
+fn fingerprint_for_path(path: &std::path::Path) -> Option<[u8; 32]> {
+    let metadata = match std::fs::symlink_metadata(path) {
+        Ok(metadata) => metadata,
+        Err(error) if cfg!(test) && error.kind() == std::io::ErrorKind::NotFound => {
+            return Some([0; 32]);
+        }
+        Err(_) => return None,
+    };
+    if !metadata.file_type().is_file() || metadata.file_type().is_symlink() {
+        return None;
+    }
+    let mut file = std::fs::File::open(path).ok()?;
+    let mut hasher = Sha256::new();
+    let mut buffer = [0_u8; 8192];
+    loop {
+        let bytes_read = file.read(&mut buffer).ok()?;
+        if bytes_read == 0 {
+            break;
+        }
+        hasher.update(&buffer[..bytes_read]);
+    }
+    Some(hasher.finalize().into())
 }
 
 fn is_compactable_skill_read_argv(command: &[String], cwd: &PathUri, document: &PathUri) -> bool {

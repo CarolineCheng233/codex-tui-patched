@@ -168,10 +168,14 @@ async fn workspace_skill_zsh_pwd_then_sed_compacts_only_workspace_output() {
     };
 
     handle_exec_begin(&mut chat, begin.clone());
+    let workspace_output = format!(
+        "{}\nWORKSPACE_SKILL_CWD_SENTINEL\nWORKSPACE_SKILL_BODY_SENTINEL\n",
+        chat.config.cwd.as_path().display()
+    );
     end_exec(
         &mut chat,
         begin,
-        "WORKSPACE_SKILL_CWD_SENTINEL\nWORKSPACE_SKILL_BODY_SENTINEL\n",
+        &workspace_output,
         "",
         /*exit_code*/ 0,
     );

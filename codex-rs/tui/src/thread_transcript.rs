@@ -309,7 +309,10 @@ fn thread_items_to_transcript_cells_with_workspace_catalog(
                         )
                     })
                     .map(|mut presentation| {
-                        presentation.set_outcome(completion_outcome(status.clone(), exit_code));
+                        presentation.set_outcome(
+                            completion_outcome(status.clone(), exit_code),
+                            aggregated_output.as_deref(),
+                        );
                         presentation
                     });
                 if let Some(cwd) = workspace_skill_read
