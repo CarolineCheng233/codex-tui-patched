@@ -1999,6 +1999,10 @@ impl ChatWidget {
         self.workspace_skill_catalog.clone()
     }
 
+    pub(crate) fn mark_workspace_skill_catalog_failed(&self, cwds: &[PathBuf]) {
+        self.workspace_skill_catalog.mark_failed_for_cwds(cwds);
+    }
+
     #[cfg(test)]
     pub(crate) fn status_line_text(&self) -> Option<String> {
         self.bottom_pane.status_line_text()

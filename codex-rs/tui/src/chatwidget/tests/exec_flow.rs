@@ -2,6 +2,23 @@ use super::*;
 use pretty_assertions::assert_eq;
 
 #[tokio::test]
+async fn workspace_skill_unrequested_cwd_requests_skills_once() {
+    let (mut chat, _rx, mut op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+    chat.on_task_started();
+
+    let script = "pwd && sed -n '1,240p' /tmp/enabled-skill/SKILL.md";
+    begin_exec(&mut chat, "workspace-skill-first", script);
+    let Op::ListSkills { cwds, force_reload } = op_rx.try_recv().expect("skills refresh") else {
+        panic!("expected ListSkills");
+    };
+    assert_eq!(cwds, vec![chat.config.cwd.to_path_buf()]);
+    assert!(!force_reload);
+
+    begin_exec(&mut chat, "workspace-skill-second", script);
+    assert!(matches!(op_rx.try_recv(), Err(TryRecvError::Empty)));
+}
+
+#[tokio::test]
 async fn workspace_skill_zsh_pwd_then_sed_compacts_only_workspace_output() {
     let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
     chat.on_task_started();

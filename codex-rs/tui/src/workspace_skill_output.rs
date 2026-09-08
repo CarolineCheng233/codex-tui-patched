@@ -52,6 +52,14 @@ impl WorkspaceSkillReadPresentation {
     pub(crate) fn set_outcome(&mut self, outcome: WorkspaceCommandOutcome) {
         self.outcome = outcome;
     }
+
+    pub(crate) fn begin_catalog_refresh_if_needed(&self) -> Option<std::path::PathBuf> {
+        self.catalog
+            .begin_refresh_if_unrequested(&self.candidate.cwd)
+            .then(|| self.candidate.cwd.to_abs_path().ok())
+            .flatten()
+            .map(|cwd| cwd.to_path_buf())
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -65,6 +73,7 @@ struct WorkspaceSkillRoot {
 enum WorkspaceCatalogState {
     #[default]
     Unrequested,
+    Loading,
     Ready(Vec<WorkspaceSkillRoot>),
     Failed,
 }
@@ -72,6 +81,7 @@ enum WorkspaceCatalogState {
 #[derive(Debug, Default)]
 pub(crate) struct WorkspaceSkillCatalog {
     states: RwLock<HashMap<PathUri, WorkspaceCatalogState>>,
+    generations: RwLock<HashMap<PathUri, u64>>,
 }
 
 impl WorkspaceSkillCatalog {
@@ -97,6 +107,45 @@ impl WorkspaceSkillCatalog {
                 WorkspaceCatalogState::Failed
             };
             states.insert(cwd, state);
+        }
+    }
+
+    pub(crate) fn begin_refresh_if_unrequested(&self, cwd: &PathUri) -> bool {
+        let Ok(mut states) = self.states.write() else {
+            return false;
+        };
+        match states.entry(cwd.clone()).or_default() {
+            WorkspaceCatalogState::Unrequested => {
+                states.insert(cwd.clone(), WorkspaceCatalogState::Loading);
+                if let Ok(mut generations) = self.generations.write() {
+                    let generation = generations.entry(cwd.clone()).or_default();
+                    *generation = generation.saturating_add(1);
+                }
+                true
+            }
+            WorkspaceCatalogState::Loading
+            | WorkspaceCatalogState::Ready(_)
+            | WorkspaceCatalogState::Failed => false,
+        }
+    }
+
+    pub(crate) fn mark_failed_for_cwds(&self, cwds: &[std::path::PathBuf]) {
+        let Ok(mut states) = self.states.write() else {
+            return;
+        };
+        for cwd in cwds {
+            if let Ok(cwd) = PathUri::from_host_native_path(cwd) {
+                states.insert(cwd, WorkspaceCatalogState::Failed);
+            }
+        }
+    }
+
+    pub(crate) fn invalidate_all(&self) {
+        let Ok(mut states) = self.states.write() else {
+            return;
+        };
+        for state in states.values_mut() {
+            *state = WorkspaceCatalogState::Unrequested;
         }
     }
 

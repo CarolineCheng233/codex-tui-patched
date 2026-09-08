@@ -100,6 +100,10 @@ impl ChatWidget {
             }
         }
         self.set_skills(Some(enabled_skills_for_mentions(&self.skills_all)));
+        self.workspace_skill_catalog.invalidate_all();
+        self.refresh_skills_for_current_cwd(/*force_reload*/ true);
+        self.bump_active_cell_revision();
+        self.request_redraw();
     }
 
     pub(crate) fn handle_manage_skills_closed(&mut self) {

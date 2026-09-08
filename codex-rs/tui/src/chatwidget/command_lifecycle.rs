@@ -267,6 +267,11 @@ impl ChatWidget {
                         self.workspace_skill_catalog.clone(),
                     )
                 });
+        if let Some(cwd) = workspace_skill_read.as_ref().and_then(
+            crate::workspace_skill_output::WorkspaceSkillReadPresentation::begin_catalog_refresh_if_needed,
+        ) {
+            self.submit_op(AppCommand::list_skills(vec![cwd], /*force_reload*/ false));
+        }
         // Ensure the status indicator is visible while the command runs.
         self.bottom_pane.ensure_status_indicator();
         let parsed_cmd = self.annotate_skill_reads_in_parsed_cmd(parsed_cmd);

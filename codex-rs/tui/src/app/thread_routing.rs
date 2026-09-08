@@ -831,15 +831,16 @@ impl App {
                 Ok(true)
             }
             AppCommand::ListSkills { cwds, force_reload } => {
-                self.handle_skills_list_result(
-                    app_server
-                        .skills_list(codex_app_server_protocol::SkillsListParams {
-                            cwds: cwds.clone(),
-                            force_reload: *force_reload,
-                        })
-                        .await,
-                    "failed to refresh skills",
-                );
+                let result = app_server
+                    .skills_list(codex_app_server_protocol::SkillsListParams {
+                        cwds: cwds.clone(),
+                        force_reload: *force_reload,
+                    })
+                    .await;
+                if result.is_err() {
+                    self.chat_widget.mark_workspace_skill_catalog_failed(cwds);
+                }
+                self.handle_skills_list_result(result, "failed to refresh skills");
                 Ok(true)
             }
             AppCommand::Compact => {
