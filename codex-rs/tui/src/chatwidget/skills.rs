@@ -161,7 +161,7 @@ impl ChatWidget {
             if let Some(skill) = self
                 .skills_all
                 .iter()
-                .find(|skill| skill.path.as_path() == path)
+                .find(|skill| skill.enabled && skill.path.as_path() == path)
             {
                 *name = format!("{name} ({} skill)", skill.name);
             }

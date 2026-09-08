@@ -11,6 +11,8 @@ use crossterm::event::MouseEventKind;
 use ratatui::layout::Rect;
 use ratatui::text::Line;
 use std::sync::Arc;
+use std::sync::atomic::AtomicUsize;
+use std::sync::atomic::Ordering;
 
 #[test]
 fn workspace_layout_keeps_the_composer_at_the_terminal_bottom() {
@@ -135,6 +137,104 @@ fn turn_state_folds_one_user_turn_and_preserves_its_selection() {
     assert_eq!(turns.selected_turn_start(), Some(2));
 }
 
+#[test]
+fn workspace_scroll_targets_the_turn_above_the_bottom_bar() {
+    let cells = vec![
+        Arc::new(UserHistoryCell {
+            message: "first prompt".into(),
+            text_elements: Vec::new(),
+            local_image_paths: Vec::new(),
+            remote_image_urls: Vec::new(),
+        }) as Arc<dyn crate::history_cell::HistoryCell>,
+        Arc::new(PlainHistoryCell::new(vec![Line::from("first reply")]))
+            as Arc<dyn crate::history_cell::HistoryCell>,
+        Arc::new(UserHistoryCell {
+            message: "second prompt".into(),
+            text_elements: Vec::new(),
+            local_image_paths: Vec::new(),
+            remote_image_urls: Vec::new(),
+        }) as Arc<dyn crate::history_cell::HistoryCell>,
+        Arc::new(PlainHistoryCell::new(vec![Line::from("second reply")]))
+            as Arc<dyn crate::history_cell::HistoryCell>,
+    ];
+    let mut overlay =
+        TranscriptOverlay::new_workspace(cells, crate::keymap::RuntimeKeymap::defaults().pager);
+
+    // The overlay starts with the latest turn selected. At the top of this
+    // short viewport, the first turn is the one immediately above its bottom
+    // bar and must become the fold target.
+    overlay.view.scroll_offset = 0;
+    overlay.sync_workspace_turn_to_viewport(Rect::new(0, 0, 80, 6));
+
+    assert_eq!(overlay.workspace_turns.selected_turn_start(), Some(0));
+    assert!(overlay.workspace_turns.collapse_selected(&overlay.cells));
+    assert!(overlay.workspace_turns.is_collapsed(0));
+    assert!(!overlay.workspace_turns.is_collapsed(2));
+}
+
+#[test]
+fn workspace_scroll_reuses_the_width_keyed_layout_index() {
+    #[derive(Debug)]
+    struct CountingCell {
+        measurements: AtomicUsize,
+    }
+
+    impl crate::history_cell::HistoryCell for CountingCell {
+        fn display_lines(&self, _width: u16) -> Vec<Line<'static>> {
+            vec![Line::from("tool output")]
+        }
+
+        fn raw_lines(&self) -> Vec<Line<'static>> {
+            vec![Line::from("tool output")]
+        }
+
+        fn desired_workspace_transcript_height(&self, _width: u16) -> u16 {
+            self.measurements.fetch_add(1, Ordering::Relaxed);
+            1
+        }
+    }
+
+    let measured = Arc::new(CountingCell {
+        measurements: AtomicUsize::new(0),
+    });
+    let cells = vec![
+        Arc::new(UserHistoryCell {
+            message: "first prompt".into(),
+            text_elements: Vec::new(),
+            local_image_paths: Vec::new(),
+            remote_image_urls: Vec::new(),
+        }) as Arc<dyn crate::history_cell::HistoryCell>,
+        measured.clone() as Arc<dyn crate::history_cell::HistoryCell>,
+        Arc::new(UserHistoryCell {
+            message: "second prompt".into(),
+            text_elements: Vec::new(),
+            local_image_paths: Vec::new(),
+            remote_image_urls: Vec::new(),
+        }) as Arc<dyn crate::history_cell::HistoryCell>,
+        Arc::new(PlainHistoryCell::new(vec![Line::from("second reply")]))
+            as Arc<dyn crate::history_cell::HistoryCell>,
+    ];
+    let mut overlay =
+        TranscriptOverlay::new_workspace(cells, crate::keymap::RuntimeKeymap::defaults().pager);
+    let area = Rect::new(0, 0, 80, 4);
+    overlay.render_workspace(area, &mut ratatui::buffer::Buffer::empty(area));
+    let measurements_after_first_render = measured.measurements.load(Ordering::Relaxed);
+
+    for _ in 0..32 {
+        overlay.sync_workspace_turn_to_viewport(area);
+    }
+
+    overlay.view.scroll_offset = 0;
+    overlay.sync_workspace_turn_to_viewport(area);
+    assert_eq!(overlay.workspace_turns.selected_turn_start(), Some(0));
+
+    assert_eq!(
+        measured.measurements.load(Ordering::Relaxed),
+        measurements_after_first_render,
+        "repeated wheel-target synchronization must reuse the cached layout",
+    );
+}
+
 #[tokio::test]
 async fn workspace_turn_keys_select_collapse_and_expand_a_whole_turn() -> std::io::Result<()> {
     let cells = vec![
@@ -180,6 +280,51 @@ async fn workspace_turn_keys_select_collapse_and_expand_a_whole_turn() -> std::i
     overlay.handle_workspace_key(&mut tui, KeyEvent::new(KeyCode::Right, KeyModifiers::ALT))?;
     assert!(!overlay.workspace_turns.is_collapsed(0));
     Ok(())
+}
+
+#[test]
+fn workspace_marks_the_selected_user_turn_without_changing_other_markers() {
+    let cells = vec![
+        Arc::new(UserHistoryCell {
+            message: "first prompt".into(),
+            text_elements: Vec::new(),
+            local_image_paths: Vec::new(),
+            remote_image_urls: Vec::new(),
+        }) as Arc<dyn crate::history_cell::HistoryCell>,
+        Arc::new(PlainHistoryCell::new(vec![Line::from("first reply")]))
+            as Arc<dyn crate::history_cell::HistoryCell>,
+        Arc::new(UserHistoryCell {
+            message: "second prompt".into(),
+            text_elements: Vec::new(),
+            local_image_paths: Vec::new(),
+            remote_image_urls: Vec::new(),
+        }) as Arc<dyn crate::history_cell::HistoryCell>,
+    ];
+    let mut overlay =
+        TranscriptOverlay::new_workspace(cells, crate::keymap::RuntimeKeymap::defaults().pager);
+    let area = Rect::new(0, 0, 80, 20);
+    let mut buffer = ratatui::buffer::Buffer::empty(area);
+    overlay.render_workspace(area, &mut buffer);
+    let rendered = buffer
+        .content()
+        .iter()
+        .map(ratatui::buffer::Cell::symbol)
+        .collect::<String>();
+
+    assert!(rendered.contains("› first prompt"));
+    assert!(rendered.contains("▸ second prompt"));
+
+    let small_area = Rect::new(0, 0, 80, 5);
+    overlay.view.scroll_offset = 0;
+    overlay.sync_workspace_turn_to_viewport(small_area);
+    let mut buffer = ratatui::buffer::Buffer::empty(small_area);
+    overlay.render_workspace(small_area, &mut buffer);
+    let rendered = buffer
+        .content()
+        .iter()
+        .map(ratatui::buffer::Cell::symbol)
+        .collect::<String>();
+    assert!(rendered.contains("▸ first prompt"));
 }
 
 #[test]

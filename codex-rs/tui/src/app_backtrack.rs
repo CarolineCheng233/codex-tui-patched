@@ -371,7 +371,7 @@ impl App {
                         composer.desired_height(width),
                     );
                     t.sync_live_tail(layout.transcript.width.max(1), active_key, |w| {
-                        chat_widget.active_cell_transcript_hyperlink_lines(w)
+                        chat_widget.active_cell_workspace_transcript_hyperlink_lines(w)
                     });
                     t.render_workspace(layout.transcript, frame.buffer);
                     local_image_previews = t.workspace_local_image_previews(layout.transcript);

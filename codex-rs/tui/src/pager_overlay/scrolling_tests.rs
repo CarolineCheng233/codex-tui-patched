@@ -100,14 +100,22 @@ fn scrolled_test_renderables(lines: &[HyperlinkLine]) -> Vec<(&'static str, Box<
             "uncached history cell",
             Box::new(CellRenderable {
                 cell: cell.clone(),
+                cell_index: 0,
                 highlighted: false,
+                workspace: false,
+                emphasize_user: false,
+                workspace_target: None,
             }),
         ),
         (
             "highlighted cached user history cell",
             Box::new(CachedRenderable::new(CellRenderable {
                 cell: user,
+                cell_index: 1,
                 highlighted: true,
+                workspace: false,
+                emphasize_user: false,
+                workspace_target: None,
             })),
         ),
         (
@@ -115,7 +123,11 @@ fn scrolled_test_renderables(lines: &[HyperlinkLine]) -> Vec<(&'static str, Box<
             Box::new(InsetRenderable::new(
                 Box::new(CachedRenderable::new(CellRenderable {
                     cell,
+                    cell_index: 2,
                     highlighted: false,
+                    workspace: false,
+                    emphasize_user: false,
+                    workspace_target: None,
                 })) as Box<dyn Renderable>,
                 Insets::tlbr(
                     /*top*/ 2, /*left*/ 1, /*bottom*/ 1, /*right*/ 1,

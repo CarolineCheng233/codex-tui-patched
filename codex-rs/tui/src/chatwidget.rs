@@ -1936,9 +1936,33 @@ impl ChatWidget {
         &self,
         width: u16,
     ) -> Option<Vec<HyperlinkLine>> {
+        self.active_cell_transcript_hyperlink_lines_for_mode(width, /*workspace*/ false)
+    }
+
+    /// Returns the active cell's transcript lines using the compact workspace representation.
+    ///
+    /// The ordinary transcript path remains unchanged; only the workspace asks cells such as
+    /// skill-read exec groups to omit implementation-detail output.
+    pub(crate) fn active_cell_workspace_transcript_hyperlink_lines(
+        &self,
+        width: u16,
+    ) -> Option<Vec<HyperlinkLine>> {
+        self.active_cell_transcript_hyperlink_lines_for_mode(width, /*workspace*/ true)
+    }
+
+    fn active_cell_transcript_hyperlink_lines_for_mode(
+        &self,
+        width: u16,
+        workspace: bool,
+    ) -> Option<Vec<HyperlinkLine>> {
         let mut lines = Vec::new();
         if let Some(cell) = self.transcript.active_cell.as_ref() {
-            lines.extend(cell.transcript_hyperlink_lines(width));
+            let cell_lines = if workspace {
+                cell.workspace_transcript_hyperlink_lines(width)
+            } else {
+                cell.transcript_hyperlink_lines(width)
+            };
+            lines.extend(cell_lines);
         }
         if let Some(token_activity_cell) = self.pending_token_activity_output() {
             let token_activity_lines = token_activity_cell.transcript_hyperlink_lines(width);

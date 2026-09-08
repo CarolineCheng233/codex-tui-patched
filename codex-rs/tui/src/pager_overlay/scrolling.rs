@@ -1,5 +1,7 @@
 //! Viewport-aware transcript rendering and the fallback for generic pager content.
 
+use std::cell::Cell;
+use std::rc::Rc;
 use std::sync::Arc;
 
 use crate::history_cell::HistoryCell;
@@ -16,7 +18,11 @@ use ratatui::widgets::Widget;
 /// Renders a committed history cell directly into the visible transcript viewport.
 pub(super) struct CellRenderable {
     pub(super) cell: Arc<dyn HistoryCell>,
+    pub(super) cell_index: usize,
     pub(super) highlighted: bool,
+    pub(super) workspace: bool,
+    pub(super) emphasize_user: bool,
+    pub(super) workspace_target: Option<Rc<Cell<Option<usize>>>>,
 }
 
 impl Renderable for CellRenderable {
@@ -26,9 +32,23 @@ impl Renderable for CellRenderable {
 
     /// Scroll visible text and hyperlink metadata together without rendering hidden rows.
     fn render_scrolled(&self, area: Rect, buf: &mut Buffer, scroll_offset: u16) -> bool {
-        let hyperlink_lines = self.cell.transcript_hyperlink_lines(area.width);
+        let hyperlink_lines = if self.workspace {
+            self.cell.workspace_transcript_hyperlink_lines(area.width)
+        } else {
+            self.cell.transcript_hyperlink_lines(area.width)
+        };
+        let highlighted = self.highlighted
+            || self
+                .workspace_target
+                .as_ref()
+                .is_some_and(|target| target.get() == Some(self.cell_index));
+        let hyperlink_lines = if self.workspace && highlighted {
+            mark_workspace_target(hyperlink_lines)
+        } else {
+            hyperlink_lines
+        };
         let style = if self.cell.as_any().is::<UserHistoryCell>() {
-            if self.highlighted {
+            if self.emphasize_user || highlighted {
                 user_message_style().reversed()
             } else {
                 user_message_style()
@@ -43,8 +63,31 @@ impl Renderable for CellRenderable {
     }
 
     fn desired_height(&self, width: u16) -> u16 {
-        self.cell.desired_transcript_height(width)
+        if self.workspace {
+            self.cell.desired_workspace_transcript_height(width)
+        } else {
+            self.cell.desired_transcript_height(width)
+        }
     }
+}
+
+/// Replace the standard user-turn marker only for the selected workspace target.
+///
+/// The replacement glyph has the same terminal width as `›`, so hyperlink column ranges remain
+/// valid and no re-wrapping is introduced by the marker.
+fn mark_workspace_target(mut lines: Vec<HyperlinkLine>) -> Vec<HyperlinkLine> {
+    for line in &mut lines {
+        let Some(first_span) = line.line.spans.first_mut() else {
+            continue;
+        };
+        let content = first_span.content.as_ref();
+        let Some(rest) = content.strip_prefix("› ") else {
+            continue;
+        };
+        first_span.content = format!("▸ {rest}").into();
+        break;
+    }
+    lines
 }
 
 /// Renders the optional in-flight transcript tail without allocating hidden rows.

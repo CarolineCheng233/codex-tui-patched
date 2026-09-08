@@ -24,9 +24,57 @@ impl TranscriptMode {
         match self {
             Self::Viewer => "T R A N S C R I P T",
             Self::Workspace => {
-                "T R A N S C R I P T  ·  ⌥↑↓ turns  ·  ⌥← fold  ·  ⌥→ expand  ·  wheel/PgUp/PgDn scroll  ·  Ctrl+T close"
+                "TRANSCRIPT · Option+Up/Down target · Option+Left fold · Option+Right expand · wheel/PgUp/PgDn scroll · Ctrl+T close"
             }
         }
+    }
+}
+
+/// Cached physical layout for one committed cell in the workspace transcript.
+///
+/// `top` is relative to the transcript content area (below the workspace header). Keeping the
+/// base cell height and the optional image rows together lets wheel scrolling find the turn at the
+/// viewport bottom without rebuilding renderables or measuring every cell.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) struct WorkspaceCellLayout {
+    pub(super) cell_index: usize,
+    pub(super) top: usize,
+    pub(super) base_height: usize,
+    pub(super) preview_rows: u16,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) struct WorkspaceTurnLayout {
+    pub(super) turn_start: usize,
+    pub(super) top: usize,
+    pub(super) bottom: usize,
+}
+
+/// Width-keyed index used by workspace scrolling and terminal image placement.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) struct WorkspaceLayoutIndex {
+    pub(super) width: u16,
+    pub(super) cells: Vec<WorkspaceCellLayout>,
+    pub(super) turns: Vec<WorkspaceTurnLayout>,
+    pub(super) total_height: usize,
+}
+
+impl WorkspaceLayoutIndex {
+    /// Select the last turn whose visible range begins before the viewport row.
+    pub(super) fn turn_at_or_before(&self, row: usize) -> Option<usize> {
+        let mut low = 0usize;
+        let mut high = self.turns.len();
+        while low < high {
+            let mid = low + (high - low) / 2;
+            if self.turns[mid].top <= row {
+                low = mid.saturating_add(1);
+            } else {
+                high = mid;
+            }
+        }
+        low.checked_sub(1)
+            .and_then(|index| self.turns.get(index))
+            .map(|turn| turn.turn_start)
     }
 }
 
@@ -50,6 +98,16 @@ impl TranscriptTurnState {
 
     pub(super) fn selected_turn_start(&self) -> Option<usize> {
         self.selected_turn
+    }
+
+    pub(super) fn select_turn_start(&mut self, turn_start: usize) -> bool {
+        if self.selected_turn == Some(turn_start)
+            || self.turn_starts.binary_search(&turn_start).is_err()
+        {
+            return false;
+        }
+        self.selected_turn = Some(turn_start);
+        true
     }
 
     pub(super) fn select_previous(&mut self) -> bool {

@@ -371,6 +371,10 @@ pub(super) fn reapply_raw_mode_after_resume() -> Result<()> {
 pub fn restore_after_exit() -> Result<()> {
     let mut first_error =
         restore_common(RawModeRestore::Disable, KeyboardRestore::ResetAfterExit).err();
+    // The event stream may have been dropped while escape-sequence input was still in the kernel
+    // queue (notably mouse reports from the transcript workspace). Discard it before returning
+    // control to the shell; otherwise the shell can echo the raw CSI bytes after `/exit`.
+    flush_terminal_input_buffer();
     if let Err(err) = terminal_stderr::finish() {
         first_error.get_or_insert(err);
     }

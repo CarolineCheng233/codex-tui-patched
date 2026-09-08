@@ -12,6 +12,7 @@ use crate::motion::activity_indicator;
 use crate::render::highlight::highlight_bash_to_lines;
 use crate::render::line_utils::prefix_lines;
 use crate::render::line_utils::push_owned_lines;
+use crate::terminal_hyperlinks::plain_hyperlink_lines;
 use crate::ui_consts::TRANSCRIPT_HINT;
 use crate::wrapping::RtOptions;
 use crate::wrapping::adaptive_wrap_line;
@@ -236,6 +237,19 @@ impl HistoryCell for ExecCell {
             }
         }
         lines
+    }
+
+    fn workspace_transcript_hyperlink_lines(
+        &self,
+        width: u16,
+    ) -> Vec<crate::terminal_hyperlinks::HyperlinkLine> {
+        if self.reads_skill_instructions() {
+            // The normal compact presentation says which skill was read while
+            // intentionally omitting the instruction body.
+            plain_hyperlink_lines(self.display_lines(width))
+        } else {
+            self.transcript_hyperlink_lines(width)
+        }
     }
 
     fn raw_lines(&self) -> Vec<Line<'static>> {
@@ -704,6 +718,7 @@ mod tests {
     use super::*;
     use codex_app_server_protocol::CommandExecutionSource as ExecCommandSource;
     use pretty_assertions::assert_eq;
+    use std::time::Duration;
 
     fn render_line_text(line: &Line<'static>) -> String {
         line.spans
@@ -990,6 +1005,92 @@ mod tests {
         • Exploring
           └ Read SKILL.md
         ");
+    }
+
+    #[test]
+    fn workspace_compacts_skill_instruction_output() {
+        let call = ExecCall {
+            call_id: "call-id".to_string(),
+            command: vec!["sed".to_string(), "-n".to_string(), "1,240p".to_string()],
+            parsed: vec![ParsedCommand::Read {
+                cmd: "sed -n '1,240p' SKILL.md".to_string(),
+                name: "SKILL.md (demo skill)".to_string(),
+                path: std::path::PathBuf::from("/tmp/example/SKILL.md"),
+            }],
+            output: Some(CommandOutput::new(
+                /*exit_code*/ 0,
+                "private skill instruction body that must stay compact".to_string(),
+            )),
+            source: ExecCommandSource::Agent,
+            start_time: None,
+            duration: Some(Duration::from_millis(1)),
+            interaction_input: None,
+        };
+        let cell = ExecCell::new(call, /*animations_enabled*/ false);
+        let rendered = cell
+            .workspace_transcript_hyperlink_lines(/*width*/ 80)
+            .into_iter()
+            .flat_map(|line| line.line.spans)
+            .map(|span| span.content.into_owned())
+            .collect::<String>();
+
+        assert!(rendered.contains("Read SKILL.md"));
+        assert!(!rendered.contains("private skill instruction body"));
+
+        let unannotated_call = ExecCall {
+            call_id: "call-id-2".to_string(),
+            command: vec!["sed".to_string(), "-n".to_string(), "1,240p".to_string()],
+            parsed: vec![ParsedCommand::Read {
+                cmd: "sed -n '1,240p' SKILL.md".to_string(),
+                name: "SKILL.md".to_string(),
+                path: std::path::PathBuf::from("/tmp/unrelated/SKILL.md"),
+            }],
+            output: Some(CommandOutput::new(
+                /*exit_code*/ 0,
+                "unannotated file content remains visible".to_string(),
+            )),
+            source: ExecCommandSource::Agent,
+            start_time: None,
+            duration: Some(Duration::from_millis(1)),
+            interaction_input: None,
+        };
+        let unannotated = ExecCell::new(unannotated_call, /*animations_enabled*/ false)
+            .workspace_transcript_hyperlink_lines(/*width*/ 80)
+            .into_iter()
+            .flat_map(|line| line.line.spans)
+            .map(|span| span.content.into_owned())
+            .collect::<String>();
+        assert!(unannotated.contains("unannotated file content remains visible"));
+
+        let mixed_call = ExecCall {
+            call_id: "call-id-3".to_string(),
+            command: vec!["sh".to_string(), "-c".to_string(), "mixed".to_string()],
+            parsed: vec![
+                ParsedCommand::Read {
+                    cmd: "read skill".to_string(),
+                    name: "SKILL.md (demo skill)".to_string(),
+                    path: std::path::PathBuf::from("/tmp/example/SKILL.md"),
+                },
+                ParsedCommand::Unknown {
+                    cmd: "unrelated command".to_string(),
+                },
+            ],
+            output: Some(CommandOutput::new(
+                /*exit_code*/ 0,
+                "mixed command output remains visible".to_string(),
+            )),
+            source: ExecCommandSource::Agent,
+            start_time: None,
+            duration: Some(Duration::from_millis(1)),
+            interaction_input: None,
+        };
+        let mixed = ExecCell::new(mixed_call, /*animations_enabled*/ false)
+            .workspace_transcript_hyperlink_lines(/*width*/ 80)
+            .into_iter()
+            .flat_map(|line| line.line.spans)
+            .map(|span| span.content.into_owned())
+            .collect::<String>();
+        assert!(mixed.contains("mixed command output remains visible"));
     }
 
     #[test]

@@ -26,7 +26,9 @@ mod transcript_workspace_tests;
 #[path = "pager_overlay/highlight_tests.rs"]
 mod highlight_tests;
 
+use std::cell::Cell as TargetCell;
 use std::io::Result;
+use std::rc::Rc;
 use std::sync::Arc;
 
 use crate::chatwidget::ActiveCellTranscriptKey;
@@ -38,12 +40,14 @@ use crate::key_hint::KeyBinding;
 use crate::key_hint::KeyBindingListExt;
 use crate::key_hint::ShortcutHint;
 use crate::keymap::PagerKeymap;
+use crate::live_wrap::take_prefix_by_width;
 use crate::render::Insets;
 use crate::render::renderable::InsetRenderable;
 use crate::render::renderable::Renderable;
 use crate::terminal_hyperlinks::HyperlinkLine;
 use crate::tui;
 use crate::tui::TuiEvent;
+use crate::width::display_width;
 use crossterm::event::KeyCode;
 use crossterm::event::KeyEvent;
 use crossterm::event::MouseEvent;
@@ -67,6 +71,9 @@ use transcript_workspace::LOCAL_IMAGE_PREVIEW_ROWS;
 use transcript_workspace::TranscriptMode;
 use transcript_workspace::TranscriptTurnState;
 pub(crate) use transcript_workspace::TranscriptWorkspaceLayout;
+use transcript_workspace::WorkspaceCellLayout;
+use transcript_workspace::WorkspaceLayoutIndex;
+use transcript_workspace::WorkspaceTurnLayout;
 
 pub(crate) enum Overlay {
     Transcript(TranscriptOverlay),
@@ -182,6 +189,8 @@ struct PagerView {
     scroll_percentage_visible: bool,
     /// If set, on next render ensure this chunk is visible.
     pending_scroll_chunk: Option<usize>,
+    /// Workspace-only header treatment. Generic pager overlays retain their legacy header.
+    workspace_header: bool,
 }
 
 impl PagerView {
@@ -200,6 +209,7 @@ impl PagerView {
             last_rendered_height: None,
             scroll_percentage_visible: true,
             pending_scroll_chunk: None,
+            workspace_header: false,
         }
     }
 
@@ -232,11 +242,30 @@ impl PagerView {
     }
 
     fn render_header(&self, area: Rect, buf: &mut Buffer) {
-        Span::from("/ ".repeat(area.width as usize / 2))
-            .dim()
-            .render(area, buf);
-        let header = format!("/ {}", self.title);
-        header.dim().render(area, buf);
+        if self.workspace_header {
+            Span::from("─".repeat(area.width as usize))
+                .dim()
+                .render(area, buf);
+            let available = area.width.saturating_sub(2) as usize;
+            if available == 0 {
+                return;
+            }
+            let (prefix, _, prefix_width) = take_prefix_by_width(&self.title, available);
+            let title = if prefix_width < display_width(&self.title) {
+                let (short_prefix, _, _) =
+                    take_prefix_by_width(&self.title, available.saturating_sub(display_width("…")));
+                format!("{short_prefix}…")
+            } else {
+                prefix
+            };
+            format!(" {title} ").dim().render(area, buf);
+        } else {
+            Span::from("/ ".repeat(area.width as usize / 2))
+                .dim()
+                .render(area, buf);
+            let header = format!("/ {}", self.title);
+            header.dim().render(area, buf);
+        }
     }
 
     fn render_content(&self, area: Rect, buf: &mut Buffer) {
@@ -502,6 +531,9 @@ pub(crate) struct TranscriptOverlay {
     mode: TranscriptMode,
     workspace_turns: TranscriptTurnState,
     local_image_previews_enabled: bool,
+    workspace_target: Rc<TargetCell<Option<usize>>>,
+    /// Width-keyed physical layout used for O(log n) turn targeting while scrolling.
+    workspace_layout_index: Option<WorkspaceLayoutIndex>,
 }
 
 const WORKSPACE_WHEEL_SCROLL_ROWS: usize = 3;
@@ -547,19 +579,24 @@ impl TranscriptOverlay {
         } else {
             Default::default()
         };
-        Self {
-            view: PagerView::new(
-                Self::render_cells(
-                    &transcript_cells,
-                    /*highlight_cell*/ None,
-                    TranscriptHistoryState::Idle,
-                    &workspace_turns,
-                    /*local_image_previews_enabled*/ false,
-                ),
-                mode.title().to_string(),
-                usize::MAX,
-                keymap,
+        let workspace_target = Rc::new(TargetCell::new(workspace_turns.selected_turn_start()));
+        let mut view = PagerView::new(
+            Self::render_cells(
+                &transcript_cells,
+                /*highlight_cell*/ None,
+                TranscriptHistoryState::Idle,
+                &workspace_turns,
+                /*local_image_previews_enabled*/ false,
+                mode.is_workspace(),
+                workspace_target.clone(),
             ),
+            mode.title().to_string(),
+            usize::MAX,
+            keymap,
+        );
+        view.workspace_header = mode.is_workspace();
+        Self {
+            view,
             cells: transcript_cells,
             highlight_cell: None,
             live_tail_key: None,
@@ -569,6 +606,8 @@ impl TranscriptOverlay {
             mode,
             workspace_turns,
             local_image_previews_enabled: false,
+            workspace_target,
+            workspace_layout_index: None,
         }
     }
 
@@ -586,7 +625,109 @@ impl TranscriptOverlay {
     }
 
     pub(crate) fn render_workspace(&mut self, area: Rect, buf: &mut Buffer) {
+        self.ensure_workspace_layout_index(area.width);
         self.view.render(area, buf);
+    }
+
+    fn invalidate_workspace_layout(&mut self) {
+        if self.is_workspace() {
+            self.workspace_layout_index = None;
+        }
+    }
+
+    fn ensure_workspace_layout_index(&mut self, width: u16) {
+        if !self.is_workspace() {
+            return;
+        }
+        let width = width.max(1);
+        if self
+            .workspace_layout_index
+            .as_ref()
+            .is_some_and(|index| index.width == width)
+        {
+            return;
+        }
+        self.workspace_layout_index = Some(self.build_workspace_layout_index(width));
+        // The cached pager height may belong to a previous width or fold state. Until the next
+        // draw recomputes the live-tail-inclusive height, use the freshly built committed layout.
+        self.view.last_rendered_height = None;
+    }
+
+    fn build_workspace_layout_index(&self, width: u16) -> WorkspaceLayoutIndex {
+        let mut top = 0usize;
+        let mut cells = Vec::with_capacity(self.cells.len());
+        let mut turns = Vec::new();
+        let mut active_turn = None;
+
+        for (index, cell) in self.cells.iter().enumerate() {
+            if self.workspace_turns.is_cell_hidden(index) {
+                continue;
+            }
+            if cell.as_any().is::<UserHistoryCell>() {
+                if let Some((turn_start, turn_top)) = active_turn.take() {
+                    turns.push(WorkspaceTurnLayout {
+                        turn_start,
+                        top: turn_top,
+                        bottom: top,
+                    });
+                }
+                active_turn = Some((index, top));
+            }
+
+            let base_height = self.workspace_cell_base_height(index, width);
+            let preview_rows = Self::image_preview_rows(
+                cell,
+                index,
+                &self.workspace_turns,
+                self.local_image_previews_enabled,
+            );
+            cells.push(WorkspaceCellLayout {
+                cell_index: index,
+                top,
+                base_height,
+                preview_rows,
+            });
+            top = top.saturating_add(base_height + usize::from(preview_rows));
+            if self.workspace_turns.is_collapsed(index) {
+                top = top.saturating_add(1);
+            }
+        }
+
+        if let Some((turn_start, turn_top)) = active_turn {
+            turns.push(WorkspaceTurnLayout {
+                turn_start,
+                top: turn_top,
+                bottom: top,
+            });
+        }
+
+        WorkspaceLayoutIndex {
+            width,
+            cells,
+            turns,
+            total_height: top,
+        }
+    }
+
+    fn workspace_cell_base_height(&self, index: usize, width: u16) -> usize {
+        let cell = &self.cells[index];
+        let placeholder = cell.as_any().is::<SessionInfoCell>()
+            && self.history_state.session_header_placeholder().is_some();
+        let height = if placeholder {
+            1
+        } else {
+            cell.desired_workspace_transcript_height(width) as usize
+        };
+        // A loading placeholder is rendered as a bare one-line renderable in
+        // `render_cell`, so it does not receive the normal inter-cell inset.
+        if placeholder {
+            return height;
+        }
+        height.saturating_add(
+            (!cell.is_stream_continuation() && index > 0)
+                .then_some(1)
+                .unwrap_or(0),
+        )
     }
 
     pub(crate) fn handle_workspace_key(
@@ -623,6 +764,7 @@ impl TranscriptOverlay {
         }
         if self.workspace_navigation_key(key_event) {
             self.view.handle_key_event(tui, key_event)?;
+            self.sync_workspace_turn_to_viewport(tui.terminal.viewport_area);
             return Ok(true);
         }
         Ok(false)
@@ -652,6 +794,7 @@ impl TranscriptOverlay {
             }
             _ => return Ok(false),
         }
+        self.sync_workspace_turn_to_viewport(tui.terminal.viewport_area);
         tui.frame_requester()
             .schedule_frame_in(crate::tui::TARGET_FRAME_INTERVAL);
         Ok(true)
@@ -660,6 +803,40 @@ impl TranscriptOverlay {
     fn workspace_navigation_key(&self, key_event: KeyEvent) -> bool {
         self.view.keymap.page_up.is_pressed(key_event)
             || self.view.keymap.page_down.is_pressed(key_event)
+    }
+
+    /// Keep the fold target aligned with the turn immediately above the
+    /// workspace bottom bar after the user scrolls. This is deliberately not
+    /// used for Option+Up/Down: those keys explicitly choose a different turn.
+    fn sync_workspace_turn_to_viewport(&mut self, area: Rect) {
+        if !self.is_workspace() {
+            return;
+        }
+        let content = self.view.content_area(area);
+        if content.width == 0 || content.height == 0 {
+            return;
+        }
+
+        self.ensure_workspace_layout_index(content.width);
+        let Some(index) = self.workspace_layout_index.as_ref() else {
+            return;
+        };
+        let total_height = self.view.last_rendered_height.unwrap_or(index.total_height);
+        let max_scroll = total_height.saturating_sub(content.height as usize);
+        let viewport_bottom = self
+            .view
+            .scroll_offset
+            .min(max_scroll)
+            .saturating_add(content.height as usize)
+            .saturating_sub(1);
+
+        let target_turn = index.turn_at_or_before(viewport_bottom);
+        if let Some(target_turn) = target_turn
+            && self.workspace_turns.select_turn_start(target_turn)
+        {
+            self.workspace_target
+                .set(self.workspace_turns.selected_turn_start());
+        }
     }
 
     pub(crate) fn workspace_should_load_older(&self, key_event: KeyEvent) -> bool {
@@ -707,6 +884,8 @@ impl TranscriptOverlay {
         history_state: TranscriptHistoryState,
         workspace_turns: &TranscriptTurnState,
         local_image_previews_enabled: bool,
+        workspace: bool,
+        workspace_target: Rc<TargetCell<Option<usize>>>,
     ) -> Vec<Box<dyn Renderable>> {
         let highlighted_cell = workspace_turns.selected_turn_start().or(highlight_cell);
         let mut renderables = Vec::with_capacity(cells.len());
@@ -725,6 +904,8 @@ impl TranscriptOverlay {
                     workspace_turns,
                     local_image_previews_enabled,
                 ),
+                workspace,
+                workspace_target.clone(),
             ));
             if workspace_turns.is_collapsed(index) {
                 let hidden_cells = workspace_turns.hidden_cell_count_after(index, cells);
@@ -743,6 +924,8 @@ impl TranscriptOverlay {
         highlight_cell: Option<usize>,
         history_state: TranscriptHistoryState,
         image_preview_rows: u16,
+        workspace: bool,
+        workspace_target: Rc<TargetCell<Option<usize>>>,
     ) -> Box<dyn Renderable> {
         if cell.as_any().is::<SessionInfoCell>()
             && let Some(placeholder) = history_state.session_header_placeholder()
@@ -751,7 +934,14 @@ impl TranscriptOverlay {
         }
         let cell_renderable = CellRenderable {
             cell: cell.clone(),
-            highlighted: highlight_cell == Some(index),
+            cell_index: index,
+            highlighted: !workspace && highlight_cell == Some(index),
+            workspace,
+            // User turns stay visually distinct when browsing old history;
+            // the selected-turn behavior is represented by the fold target,
+            // not a one-off background color.
+            emphasize_user: workspace,
+            workspace_target: workspace.then_some(workspace_target),
         };
         let mut cell_renderable: Box<dyn Renderable> = if cell.has_stable_transcript_height() {
             Box::new(CachedRenderable::new(cell_renderable))
@@ -813,6 +1003,8 @@ impl TranscriptOverlay {
                 self.highlight_cell,
                 self.history_state,
                 /*image_preview_rows*/ 0,
+                /*workspace*/ false,
+                self.workspace_target.clone(),
             );
             self.cells.push(cell);
             self.view.renderables.push(cell_renderable);
@@ -1008,6 +1200,7 @@ impl TranscriptOverlay {
         self.take_live_tail_renderable();
         self.live_tail_key = next_key;
         self.live_tail_present = false;
+        self.invalidate_workspace_layout();
 
         if let Some(key) = next_key {
             let lines = compute_lines(width).unwrap_or_default();
@@ -1041,6 +1234,8 @@ impl TranscriptOverlay {
                             self.highlight_cell,
                             self.history_state,
                             /*image_preview_rows*/ 0,
+                            /*workspace*/ false,
+                            self.workspace_target.clone(),
                         );
                     }
                 }
@@ -1061,12 +1256,19 @@ impl TranscriptOverlay {
 
     // Detach the live tail before changing cells: their old count identifies the tail renderable.
     fn rebuild_renderables(&mut self, tail_renderable: Option<Box<dyn Renderable>>) {
+        self.invalidate_workspace_layout();
+        if self.is_workspace() {
+            self.workspace_target
+                .set(self.workspace_turns.selected_turn_start());
+        }
         self.view.renderables = Self::render_cells(
             &self.cells,
             self.highlight_cell,
             self.history_state,
             &self.workspace_turns,
             self.local_image_previews_enabled,
+            self.is_workspace(),
+            self.workspace_target.clone(),
         );
         if let Some(tail) = tail_renderable {
             self.view.renderables.push(tail);
@@ -1102,7 +1304,7 @@ impl TranscriptOverlay {
     }
 
     pub(crate) fn workspace_local_image_previews(
-        &self,
+        &mut self,
         area: Rect,
     ) -> Vec<crate::pets::LocalImagePreviewDraw> {
         if !self.is_workspace() || !self.local_image_previews_enabled {
@@ -1116,30 +1318,19 @@ impl TranscriptOverlay {
         if columns == 0 || content.height < LOCAL_IMAGE_PREVIEW_ROWS {
             return Vec::new();
         }
-
-        let mut top = -(self.view.scroll_offset as isize);
+        self.ensure_workspace_layout_index(content.width);
+        let Some(index) = self.workspace_layout_index.as_ref() else {
+            return Vec::new();
+        };
+        let total_height = self.view.last_rendered_height.unwrap_or(index.total_height);
+        let max_scroll = total_height.saturating_sub(content.height as usize);
+        let scroll_offset = self.view.scroll_offset.min(max_scroll);
         let mut previews = Vec::new();
-        for (index, cell) in self.cells.iter().enumerate() {
-            if self.workspace_turns.is_cell_hidden(index) {
+        for layout in &index.cells {
+            let Some(cell) = self.cells.get(layout.cell_index) else {
                 continue;
-            }
-            let base_height = Self::render_cell(
-                cell,
-                index,
-                self.workspace_turns
-                    .selected_turn_start()
-                    .or(self.highlight_cell),
-                self.history_state,
-                /*image_preview_rows*/ 0,
-            )
-            .desired_height(content.width) as isize;
-            let preview_rows = Self::image_preview_rows(
-                cell,
-                index,
-                &self.workspace_turns,
-                self.local_image_previews_enabled,
-            );
-            if preview_rows > 0
+            };
+            if layout.preview_rows > 0
                 && let Some(user_cell) = cell.as_any().downcast_ref::<UserHistoryCell>()
             {
                 for (image_index, path) in user_cell.local_image_paths.iter().enumerate() {
@@ -1147,16 +1338,17 @@ impl TranscriptOverlay {
                         continue;
                     }
                     let image_top = content.y as isize
-                        + top
-                        + base_height
+                        + layout.top as isize
+                        + layout.base_height as isize
                         + (image_index.saturating_mul(usize::from(LOCAL_IMAGE_PREVIEW_ROWS))
                             as isize);
+                    let image_top = image_top.saturating_sub(scroll_offset as isize);
                     let image_bottom = image_top.saturating_add(LOCAL_IMAGE_PREVIEW_ROWS as isize);
                     if image_top >= content.y as isize && image_bottom <= content.bottom() as isize
                     {
                         previews.push(crate::pets::LocalImagePreviewDraw {
                             image_id: 0xC100_0000u32
-                                .saturating_add((index as u32).saturating_mul(16))
+                                .saturating_add((layout.cell_index as u32).saturating_mul(16))
                                 .saturating_add(image_index as u32),
                             path: path.clone(),
                             x: content.x.saturating_add(2),
@@ -1166,10 +1358,6 @@ impl TranscriptOverlay {
                         });
                     }
                 }
-            }
-            top = top.saturating_add(base_height + preview_rows as isize);
-            if self.workspace_turns.is_collapsed(index) {
-                top = top.saturating_add(1);
             }
         }
         previews
