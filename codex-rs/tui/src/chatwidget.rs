@@ -1995,6 +1995,10 @@ impl ChatWidget {
         &self.config
     }
 
+    pub(crate) fn workspace_skill_catalog(&self) -> Arc<WorkspaceSkillCatalog> {
+        self.workspace_skill_catalog.clone()
+    }
+
     #[cfg(test)]
     pub(crate) fn status_line_text(&self) -> Option<String> {
         self.bottom_pane.status_line_text()

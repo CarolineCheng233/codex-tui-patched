@@ -277,7 +277,7 @@ impl HistoryCell for ExecCell {
     }
 }
 
-fn workspace_read_summary_lines(
+pub(crate) fn workspace_read_summary_lines(
     summaries: &[WorkspaceReadSummary],
     width: u16,
 ) -> Vec<Line<'static>> {
