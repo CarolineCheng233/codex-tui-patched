@@ -1769,9 +1769,7 @@ impl ChatWidget {
     }
 
     fn refresh_skills_for_current_cwd(&mut self, force_reload: bool) {
-        let mut cwds = force_reload
-            .then(|| self.workspace_skill_catalog.invalidate_all())
-            .unwrap_or_default();
+        let mut cwds = if force_reload { self.workspace_skill_catalog.invalidate_all() } else { Default::default() };
         if !cwds
             .iter()
             .any(|cwd| cwd.as_path() == self.config.cwd.as_path())

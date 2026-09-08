@@ -35,7 +35,7 @@ fn workspace_skill_persisted_command_compacts_only_workspace_output() {
     });
 
     let script = format!("pwd && sed -n '1,240p' {}", skill_path.display());
-    let command = vec!["zsh".to_string(), "-lc".to_string(), script.clone()];
+    let command = vec!["zsh".to_string(), "-lc".to_string(), script];
     let item = ThreadItem::CommandExecution {
         id: "persisted-workspace-skill".to_string(),
         plugin_id: None,

@@ -147,7 +147,7 @@ async fn workspace_skill_zsh_pwd_then_sed_compacts_only_workspace_output() {
     });
 
     let script = format!("pwd && sed -n '1,240p' {}", skill_path.display());
-    let command = vec!["zsh".to_string(), "-lc".to_string(), script.clone()];
+    let command = vec!["zsh".to_string(), "-lc".to_string(), script];
     let command_actions = codex_shell_command::parse_command::parse_command(&command)
         .into_iter()
         .map(|parsed| AppServerCommandAction::from_core_with_cwd(parsed, &chat.config.cwd))
