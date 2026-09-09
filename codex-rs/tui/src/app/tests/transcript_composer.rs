@@ -388,6 +388,29 @@ async fn workspace_parity_details_thread_change_clears_old_overlay() -> Result<(
 }
 
 #[tokio::test]
+async fn workspace_parity_details_terminal_lifecycle() -> Result<()> {
+    let (mut app, _app_event_rx, _op_rx) = make_test_app_with_channels().await;
+    app.local_settings.tui.transcript_workspace = true;
+    let mut app_server = start_config_write_test_app_server(&app).await?;
+    let mut tui = crate::tui::test_support::make_test_tui()?;
+    let session = test_thread_session(ThreadId::new(), app.config.cwd.to_path_buf());
+    app.chat_widget.handle_thread_session(session);
+
+    app.open_transcript_overlay(&mut tui);
+    assert!(tui.is_alt_screen_active());
+    press_key(&mut app, &mut tui, &mut app_server, KeyCode::Char('t')).await?;
+    assert!(tui.is_alt_screen_active());
+    press_key(&mut app, &mut tui, &mut app_server, KeyCode::Char('t')).await?;
+    assert!(tui.is_alt_screen_active());
+
+    app.close_transcript_overlay(&mut tui);
+    assert!(app.overlay.is_none());
+    assert!(!tui.is_alt_screen_active());
+    app_server.shutdown().await?;
+    Ok(())
+}
+
+#[tokio::test]
 async fn workspace_parity_details_prepend_sync() -> Result<()> {
     let (mut app, _app_event_rx, _op_rx) = make_test_app_with_channels().await;
     app.local_settings.tui.transcript_workspace = true;
