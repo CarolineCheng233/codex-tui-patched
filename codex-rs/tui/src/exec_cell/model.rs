@@ -11,6 +11,7 @@ use std::time::Instant;
 
 use super::live_output::LiveCommandOutput;
 use codex_app_server_protocol::CommandExecutionSource as ExecCommandSource;
+use codex_app_server_protocol::CommandExecutionStatus;
 use codex_protocol::parse_command::ParsedCommand;
 use itertools::Either;
 
@@ -76,6 +77,14 @@ pub(crate) struct ExecCall {
 pub(crate) struct ExecCell {
     pub(crate) calls: Vec<ExecCall>,
     animations_enabled: bool,
+    pub(super) persisted_completion: Option<PersistedCommandCompletion>,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct PersistedCommandCompletion {
+    pub(crate) status: CommandExecutionStatus,
+    pub(crate) exit_code: Option<i32>,
+    pub(crate) duration: Option<Duration>,
 }
 
 impl ExecCell {
@@ -83,6 +92,42 @@ impl ExecCell {
         Self {
             calls: vec![call],
             animations_enabled,
+            persisted_completion: None,
+        }
+    }
+
+    pub(crate) fn from_persisted_command(
+        call_id: String,
+        command: Vec<String>,
+        parsed: Vec<ParsedCommand>,
+        source: ExecCommandSource,
+        status: CommandExecutionStatus,
+        exit_code: Option<i32>,
+        aggregated_output: String,
+        duration: Option<Duration>,
+    ) -> Self {
+        let display_exit_code = if status == CommandExecutionStatus::Completed {
+            exit_code.unwrap_or_default()
+        } else {
+            exit_code.filter(|code| *code != 0).unwrap_or(1)
+        };
+        Self {
+            calls: vec![ExecCall {
+                call_id,
+                command,
+                parsed,
+                output: Some(CommandOutput::new(display_exit_code, aggregated_output)),
+                source,
+                start_time: None,
+                duration: Some(duration.unwrap_or_default()),
+                interaction_input: None,
+            }],
+            animations_enabled: false,
+            persisted_completion: Some(PersistedCommandCompletion {
+                status,
+                exit_code,
+                duration,
+            }),
         }
     }
 

@@ -3,6 +3,7 @@ use std::time::Instant;
 use super::model::CommandOutput;
 use super::model::ExecCall;
 use super::model::ExecCell;
+use super::model::PersistedCommandCompletion;
 use crate::exec_command::strip_bash_lc_and_escape;
 use crate::history_cell::HistoryCell;
 use crate::history_cell::plain_lines;
@@ -193,7 +194,7 @@ impl HistoryCell for ExecCell {
     }
 
     fn transcript_lines(&self, width: u16) -> Vec<Line<'static>> {
-        ExecCell::transcript_lines_for_calls(&self.calls, width)
+        ExecCell::transcript_lines_for_calls(&self.calls, width, self.persisted_completion.as_ref())
     }
 
     fn raw_lines(&self) -> Vec<Line<'static>> {
@@ -202,7 +203,11 @@ impl HistoryCell for ExecCell {
 }
 
 impl ExecCell {
-    fn transcript_lines_for_calls(calls: &[ExecCall], width: u16) -> Vec<Line<'static>> {
+    fn transcript_lines_for_calls(
+        calls: &[ExecCall],
+        width: u16,
+        persisted_completion: Option<&PersistedCommandCompletion>,
+    ) -> Vec<Line<'static>> {
         let mut lines: Vec<Line<'static>> = vec![];
         for (i, call) in calls.iter().enumerate() {
             if i > 0 {
@@ -230,7 +235,16 @@ impl ExecCell {
                         push_owned_lines(&wrapped, &mut lines);
                     }
                 }
-                if let Some(duration) = call.duration {
+                if let Some(completion) = persisted_completion {
+                    let mut details = format!("status: {:?}", completion.status);
+                    if let Some(exit_code) = completion.exit_code {
+                        details.push_str(&format!(" · exit {exit_code}"));
+                    }
+                    if let Some(duration) = completion.duration {
+                        details.push_str(&format!(" · {}", format_duration(duration)));
+                    }
+                    lines.push(Line::from(details.dim()));
+                } else if let Some(duration) = call.duration {
                     let duration = format_duration(duration);
                     let mut result: Line = if output.exit_code == 0 {
                         Line::from("✓".green().bold())

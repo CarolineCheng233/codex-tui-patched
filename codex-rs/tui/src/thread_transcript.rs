@@ -1,9 +1,12 @@
 //! Render persisted thread turns into history-cell building blocks.
 
 use std::sync::Arc;
+use std::time::Duration;
 
 use crate::app_server_session::AppServerSession;
 use crate::app_server_session::HistoryHydrationScope;
+use crate::exec_cell::ExecCell;
+use crate::exec_command::split_command_string;
 use crate::git_action_directives::parse_assistant_markdown;
 use crate::history_cell::AgentMarkdownCell;
 use crate::history_cell::HistoryCell;
@@ -184,6 +187,34 @@ pub(crate) fn thread_items_to_transcript_cells(
                     )));
                 }
             }
+            ThreadItem::CommandExecution {
+                id,
+                command,
+                source,
+                status,
+                command_actions,
+                aggregated_output,
+                exit_code,
+                duration_ms,
+                ..
+            } => {
+                let parsed = command_actions
+                    .into_iter()
+                    .map(codex_app_server_protocol::CommandAction::into_core)
+                    .collect();
+                let duration =
+                    duration_ms.map(|duration_ms| Duration::from_millis(duration_ms.max(0) as u64));
+                cells.push(Arc::new(ExecCell::from_persisted_command(
+                    id,
+                    split_command_string(&command),
+                    parsed,
+                    source,
+                    status,
+                    exit_code,
+                    aggregated_output.unwrap_or_default(),
+                    duration,
+                )));
+            }
             other => {
                 if let Some(cell) = fallback_transcript_cell(&other) {
                     cells.push(Arc::new(cell));
@@ -321,3 +352,7 @@ fn command_execution_fallback_lines(
     }
     lines
 }
+
+#[cfg(test)]
+#[path = "thread_transcript_tests.rs"]
+mod tests;
