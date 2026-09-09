@@ -274,6 +274,72 @@ async fn workspace_input_shift_space_reaches_composer() -> Result<()> {
 }
 
 #[tokio::test]
+async fn workspace_input_home_end_reaches_composer() -> Result<()> {
+    let (mut app, _app_event_rx, _op_rx) = make_test_app_with_channels().await;
+    app.local_settings.tui.transcript_workspace = true;
+    let mut app_server = start_config_write_test_app_server(&app).await?;
+    let mut tui = crate::tui::test_support::make_test_tui()?;
+    let session = test_thread_session(ThreadId::new(), app.config.cwd.to_path_buf());
+    app.chat_widget.handle_thread_session(session);
+    app.open_transcript_overlay(&mut tui);
+    app.chat_widget.apply_external_edit("abc".into());
+
+    press_key(&mut app, &mut tui, &mut app_server, KeyCode::Home).await?;
+    press_key(&mut app, &mut tui, &mut app_server, KeyCode::Char('X')).await?;
+    std::thread::sleep(crate::bottom_pane::ChatComposer::recommended_paste_flush_delay());
+    app.handle_tui_event(&mut tui, &mut app_server, TuiEvent::Draw)
+        .await?;
+    assert_eq!(app.chat_widget.composer_text_with_pending(), "Xabc");
+
+    press_key(&mut app, &mut tui, &mut app_server, KeyCode::End).await?;
+    press_key(&mut app, &mut tui, &mut app_server, KeyCode::Char('Y')).await?;
+    std::thread::sleep(crate::bottom_pane::ChatComposer::recommended_paste_flush_delay());
+    app.handle_tui_event(&mut tui, &mut app_server, TuiEvent::Draw)
+        .await?;
+    assert_eq!(app.chat_widget.composer_text_with_pending(), "XabcY");
+    app_server.shutdown().await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn workspace_input_ctrl_b_f_reaches_composer() -> Result<()> {
+    let (mut app, _app_event_rx, _op_rx) = make_test_app_with_channels().await;
+    app.local_settings.tui.transcript_workspace = true;
+    let mut app_server = start_config_write_test_app_server(&app).await?;
+    let mut tui = crate::tui::test_support::make_test_tui()?;
+    let session = test_thread_session(ThreadId::new(), app.config.cwd.to_path_buf());
+    app.chat_widget.handle_thread_session(session);
+    app.open_transcript_overlay(&mut tui);
+    app.chat_widget.apply_external_edit("abc".into());
+
+    app.handle_tui_event(
+        &mut tui,
+        &mut app_server,
+        TuiEvent::Key(KeyEvent::new(KeyCode::Char('b'), KeyModifiers::CONTROL)),
+    )
+    .await?;
+    press_key(&mut app, &mut tui, &mut app_server, KeyCode::Char('X')).await?;
+    std::thread::sleep(crate::bottom_pane::ChatComposer::recommended_paste_flush_delay());
+    app.handle_tui_event(&mut tui, &mut app_server, TuiEvent::Draw)
+        .await?;
+    assert_eq!(app.chat_widget.composer_text_with_pending(), "abXc");
+
+    app.handle_tui_event(
+        &mut tui,
+        &mut app_server,
+        TuiEvent::Key(KeyEvent::new(KeyCode::Char('f'), KeyModifiers::CONTROL)),
+    )
+    .await?;
+    press_key(&mut app, &mut tui, &mut app_server, KeyCode::Char('Y')).await?;
+    std::thread::sleep(crate::bottom_pane::ChatComposer::recommended_paste_flush_delay());
+    app.handle_tui_event(&mut tui, &mut app_server, TuiEvent::Draw)
+        .await?;
+    assert_eq!(app.chat_widget.composer_text_with_pending(), "abXcY");
+    app_server.shutdown().await?;
+    Ok(())
+}
+
+#[tokio::test]
 async fn workspace_parity_details_roundtrip_preserves_the_draft() -> Result<()> {
     let (mut app, _app_event_rx, _op_rx) = make_test_app_with_channels().await;
     app.local_settings.tui.transcript_workspace = true;
