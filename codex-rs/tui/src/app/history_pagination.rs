@@ -10,6 +10,7 @@ use crate::history_cell::UserHistoryCell;
 use crate::pager_overlay::TranscriptHistoryState;
 use crate::thread_transcript::RawReasoningVisibility;
 use crate::thread_transcript::thread_items_to_transcript_cells;
+use crate::thread_transcript::workspace_thread_items_to_transcript_cells;
 use codex_app_server_protocol::ClientRequest;
 use codex_app_server_protocol::ThreadItemsListResponse;
 
@@ -199,7 +200,7 @@ impl App {
             });
             store.turns.splice(0..0, turns);
         }
-        let cells = thread_items_to_transcript_cells(
+        let cells = workspace_thread_items_to_transcript_cells(
             Some(thread_id),
             &cwd,
             items,

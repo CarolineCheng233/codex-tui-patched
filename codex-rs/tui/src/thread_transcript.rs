@@ -93,6 +93,41 @@ pub(crate) fn thread_items_to_transcript_cells(
     raw_reasoning_visibility: RawReasoningVisibility,
     config: Option<&Config>,
 ) -> TranscriptCells {
+    thread_items_to_transcript_cells_with_workspace_presentation(
+        thread_id,
+        cwd,
+        items,
+        raw_reasoning_visibility,
+        config,
+        /*workspace_presentation*/ false,
+    )
+}
+
+pub(crate) fn workspace_thread_items_to_transcript_cells(
+    thread_id: Option<ThreadId>,
+    cwd: &AbsolutePathBuf,
+    items: impl IntoIterator<Item = ThreadItem>,
+    raw_reasoning_visibility: RawReasoningVisibility,
+    config: Option<&Config>,
+) -> TranscriptCells {
+    thread_items_to_transcript_cells_with_workspace_presentation(
+        thread_id,
+        cwd,
+        items,
+        raw_reasoning_visibility,
+        config,
+        /*workspace_presentation*/ true,
+    )
+}
+
+fn thread_items_to_transcript_cells_with_workspace_presentation(
+    thread_id: Option<ThreadId>,
+    cwd: &AbsolutePathBuf,
+    items: impl IntoIterator<Item = ThreadItem>,
+    raw_reasoning_visibility: RawReasoningVisibility,
+    config: Option<&Config>,
+    workspace_presentation: bool,
+) -> TranscriptCells {
     let inline_visualization_context = config.and_then(|config| {
         thread_id.and_then(|thread_id| InlineVisualizationContext::from_config(config, thread_id))
     });
@@ -198,7 +233,7 @@ pub(crate) fn thread_items_to_transcript_cells(
                 exit_code,
                 duration_ms,
                 ..
-            } => {
+            } if workspace_presentation => {
                 let parsed = command_actions
                     .into_iter()
                     .map(codex_app_server_protocol::CommandAction::into_core)
@@ -218,7 +253,7 @@ pub(crate) fn thread_items_to_transcript_cells(
                     },
                 )));
             }
-            ThreadItem::WebSearch(item) => {
+            ThreadItem::WebSearch(item) if workspace_presentation => {
                 cells.push(Arc::new(crate::history_cell::new_web_search_call(
                     item.id,
                     item.query,

@@ -50,8 +50,13 @@ fn workspace_parity_persisted_read_default_display() {
         duration_ms: Some(1),
     };
 
-    let cells =
-        thread_items_to_transcript_cells(None, &cwd, [item], RawReasoningVisibility::Hidden, None);
+    let cells = workspace_thread_items_to_transcript_cells(
+        None,
+        &cwd,
+        [item],
+        RawReasoningVisibility::Hidden,
+        None,
+    );
 
     assert_eq!(cells.len(), 1);
     let workspace = joined_workspace_lines(cells[0].as_ref());
@@ -67,6 +72,40 @@ fn workspace_parity_persisted_read_default_display() {
         .map(|span| span.content.into_owned())
         .collect::<String>();
     assert!(detail.contains("PERSISTED_READ_BODY_SENTINEL"));
+}
+
+#[test]
+fn generic_persisted_command_projection_keeps_the_full_fallback() {
+    let cwd = test_path_buf("/tmp/generic-persisted-read").abs();
+    let command = vec![
+        "sed".to_string(),
+        "-n".to_string(),
+        "1,240p".to_string(),
+        "/tmp/demo/SKILL.md".to_string(),
+    ];
+    let item = ThreadItem::CommandExecution {
+        id: "generic-persisted-read".to_string(),
+        plugin_id: None,
+        script_path: None,
+        command: codex_shell_command::parse_command::shlex_join(&command),
+        cwd: cwd.clone().into(),
+        process_id: None,
+        source: CommandExecutionSource::Agent,
+        status: CommandExecutionStatus::Completed,
+        command_actions: codex_shell_command::parse_command::parse_command(&command)
+            .into_iter()
+            .map(|parsed| CommandAction::from_core_with_cwd(parsed, &cwd))
+            .collect(),
+        aggregated_output: Some("GENERIC_FALLBACK_BODY_SENTINEL\n".to_string()),
+        exit_code: Some(0),
+        duration_ms: Some(1),
+    };
+
+    let cells =
+        thread_items_to_transcript_cells(None, &cwd, [item], RawReasoningVisibility::Hidden, None);
+    let rendered = joined_workspace_lines(cells[0].as_ref());
+    assert!(rendered.starts_with("$ sed"));
+    assert!(rendered.contains("GENERIC_FALLBACK_BODY_SENTINEL"));
 }
 
 #[test]
@@ -88,8 +127,13 @@ fn workspace_parity_persisted_detail_preserves_optional_completion_fields() {
         duration_ms: Some(1250),
     };
 
-    let cells =
-        thread_items_to_transcript_cells(None, &cwd, [item], RawReasoningVisibility::Hidden, None);
+    let cells = workspace_thread_items_to_transcript_cells(
+        None,
+        &cwd,
+        [item],
+        RawReasoningVisibility::Hidden,
+        None,
+    );
     let detail = cells[0]
         .transcript_lines(/*width*/ 80)
         .into_iter()
@@ -115,8 +159,13 @@ fn workspace_parity_persisted_web_search_uses_normal_display() {
         results: None,
     });
 
-    let cells =
-        thread_items_to_transcript_cells(None, &cwd, [item], RawReasoningVisibility::Hidden, None);
+    let cells = workspace_thread_items_to_transcript_cells(
+        None,
+        &cwd,
+        [item],
+        RawReasoningVisibility::Hidden,
+        None,
+    );
 
     let workspace = joined_workspace_lines(cells[0].as_ref());
     assert_eq!(workspace, "• Searched the web for Codex TUI");
