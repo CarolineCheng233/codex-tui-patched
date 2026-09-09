@@ -465,3 +465,5 @@ just test -p codex-tui -E 'test(~workspace_input_space_reaches_composer)'
 | 全量 TUI | 未通过，未归因 | 4315 通过、25 失败、1 超时；失败以网络 mock/异步超时、custom-terminal pending snapshot 为主 | 在本轮之前基线或独立环境复验，逐项归因；不能宣称无关 |
 
 本次实现提交顺序：`737d74165e`、`73dc9e30b7`、`e593e0d5c6`、`9b6b59dd16`、`0a6d98e589`、`a89c85f783`、`a583be1a9a`、`d6faeeb3d1`、`c3ee81391d`、`1918691b75`、`bc6245b979`。未跟踪的 custom-terminal `.snap.new` 和旧方案文件不属于本任务，保持原样且未提交。
+
+2026-09-09 GUI 证据：iTerm2 已运行，但 Computer Use 对 bundle ID `com.googlecode.iterm2` 明确返回策略拒绝。按 7.4 节红线停止 GUI 自动操作，未使用替代注入方式；该限制不影响已完成的自动化与包完整性证据，但 iTerm2 图片/真实按键视觉验收仍需用户手动完成。
