@@ -3,6 +3,8 @@
 > 状态：方案待实施；用户截图已证明上一版交付未满足预期。本文不代表代码已修复或验收通过。
 >
 > 执行方式：使用 superpowers:executing-plans 按任务串行执行；未经用户明确授权不启动子代理、不创建或切换分支。
+>
+> 2026-09-09 修订：纳入四项对抗式审查意见。实施必须按测试驱动开发（TDD）的 RED → GREEN → REFACTOR 顺序推进；本文中的测试均为待实施要求，不代表已经编写或执行。
 
 **目标：** 在固定输入框、可滚动历史的 Workspace 中复用官方正常聊天的输出展示规则，修复空格翻页，并保留轮次折叠、编辑快捷键和图片预览。
 
@@ -68,6 +70,7 @@
 | UserShell | 官方 You ran 与对应预览 | 完整记录 |
 | 失败、缺失退出码、Interaction 等特殊情况 | 完全沿用该基线官方生命周期和 renderer，不额外定义隐藏策略 | 沿用官方详情规则 |
 | skill 未加载、禁用、文件变动 | 不阻止官方 Read 摘要；技能注解以官方现有逻辑为准 | 原数据完整保留 |
+| WebSearch | 本次包含：按对应官方事件展示 Searching/Searched，恢复与分页使用官方完成态展示 | 使用该类型官方支持的详情，不承诺协议未提供的搜索正文 |
 
 执行过程保留官方进度摘要，不默认铺开全部执行正文。它不是删除、隐瞒执行结果的安全机制，不要求证明输出字节确实来自某个技能文件。
 
@@ -81,7 +84,7 @@
 6. Ctrl+U、Ctrl+B/F、左右方向键、Home/End 等编辑键归 Composer；不借本次改变官方编辑含义。
 7. 历史导航保留 PageUp/PageDown、鼠标滚轮；轮次导航保留既定 Alt+方向键。弹窗和选择器打开时，它们优先处理自身按键。
 8. 保留 iTerm2 本地图片预览，折叠、展开、滚动和窗口缩放时不留下错位图像。
-9. 新消息、活动尾部、completion-only、orphan、初始 resume、旧页 prepend 均遵守同样展示规则。
+9. CommandExecution 与 WebSearch 的新消息、活动尾部、completion-only、orphan、初始 resume、旧页 prepend 均采用对应官方入口的正常展示；不要求不同事件序列具有相同分组。其他类型的保留范围见 4.6。
 10. 完整记录仍可主动查看；切入详情、返回 Workspace 后，输入草稿、附件、折叠状态和历史锚点保持。
 
 ## 4. 如何修改
@@ -113,11 +116,20 @@ fn workspace_transcript_hyperlink_lines(&self, width: u16) -> Vec<HyperlinkLine>
 
 目前分页 CommandExecution 的 fallback 已压成完整文本，单纯换默认渲染接口仍会显示 `$ command`。必须在交互式历史 adapter 保留 command、actions、source、item cwd、status、exit_code、duration 与 output。
 
-沿用官方 replay 的命令构建与完成规则生成 ExecCell，用于正常 Workspace 展示；完整详情仍保持原有持久化 fallback 文本契约。可让既有 `WorkspaceCommandHistoryCell` 持有正常展示 ExecCell 与原详情行，在自己的 `workspace_transcript_hyperlink_lines` 中委托正常 renderer。不要复制官方 lifecycle 条件，更不要为了完成态伪造 begin/output。
+**先锁定事件语义，再决定分组：** 固定官方基线的 `handle_command_execution_completed_now` 对没有匹配 begin、且当前没有其它运行中 Exec/MCP cell 的新 call 进入 `NewCell`，刷新旧 cell 后创建新 cell；若其它执行仍活动，则走官方 orphan 分支。连续完成事件不等同于 live begin/end 序列，不应为历史强制调用 `add_call`。
 
-连续 exploring 分组复用 `ExecCell::add_call`；跨普通命令、UserShell、用户/助手消息不能合并。分页边界的连续 Read 要与一次性载入保持一致，不能将交互式 adapter 接入导出或 resume picker 后改变它们现有行为。
+| 入口 | 构建与分组契约 | 必须对照的输入 |
+| --- | --- | --- |
+| live begin/end | 沿用官方 active cell、`add_call`、flush 规则 | 相同顺序的 begin、delta、end 事件 |
+| completion-only / orphan | 沿用官方完成路由；不补造 begin，不强并相邻 Read | 包含不同 call ID、活动命令与孤立完成事件的序列 |
+| 初始 resume | 保留 `replay_thread_turns → handle_command_execution_completed_now` 路径 | 相同持久化 turns 经官方 replay 后的结果 |
+| 历史分页 | 按持久化完成事件语义创建正常 cell；不跨页额外合并 | 相同历史一次载入与拆页载入；不是拿 live golden 强求相等 |
 
-初始 resume 已核验通过 `replay_thread_turns → handle_command_execution_completed_now`；仍需真实 App 入口测试，而不是手工向 `transcript_cells` 填入期望 cell。
+页边界对照只要求**相同持久化输入**的 cell 顺序、分组、内容、turn 归属一致。按 item ID 去重，保留 turn 边界；普通命令、UserShell、用户/助手消息和不同轮次均不得因分页被合并。若页接缝连接的是已存在的 live 分组，保留其既有成员，不从邻接关系推断应当合并。测试必须走真实 resume、分页响应入口，不手工填入期望 ExecCell。
+
+**单份输出所有权：** 删除“正常 ExecCell + 常驻原详情行”方案。交互式 adapter 内的 ExecCell 持有一份命令输出；wrapper 只保存它不能表达的原始可选状态等小量元数据。普通预览与详情从这份数据借用读取，详情行仅在渲染调用中临时生成，不常驻第二份正文。必要的借用访问只开放到 TUI crate 内，不引入新的 presentation 状态机；既有会话存储不借本次重构。
+
+交互式历史详情保留 `$ command`、真实 status/可选 exit_code 和完整输出，原记录有 duration 时补充耗时；没有该字段就不显示，不伪造为 0。正常展示对缺失退出码沿用官方规则，详情不得把推导值当作记录值。导出及 resume picker 继续走原 fallback，格式与字段保持原样；不能为交互式详情补耗时而改变它们。完整输出不丢行、不做存储截断，原有展示层缩进规则不等于修改持久化字节。
 
 ### 4.3 撤除上一版 skill 展示状态机
 
@@ -137,13 +149,40 @@ fn workspace_transcript_hyperlink_lines(&self, width: u16) -> Vec<HyperlinkLine>
 
 Workspace 不再把整组 pager 的 page_up/page_down 别名作为导航入口。明确匹配 PageUp/PageDown 和已有轮次快捷键，其余交给 Composer；可打印字符（含 Space/Shift+Space）、输入法提交、粘贴不能被 pager 抢占。
 
-事件顺序：活动弹窗/选择器 → Workspace 专属导航 → Composer。只读详情保留官方 pager 空格翻页。Ctrl+B/F 不再作为 Workspace 翻页键，避免破坏编辑。
+事件顺序：活动弹窗/选择器 → Workspace 专属导航 → Composer。只读详情保留官方 pager 空格翻页。Ctrl+B/F 不再作为 Workspace 翻页键，避免破坏编辑。是否请求更早历史也受相同优先级约束，不能在弹窗处理按键前触发底层分页。
 
 ### 4.5 完整详情入口
 
-沿用官方 `open_transcript`（默认 Ctrl+T）作为主动进入完整详情的操作。在 Workspace 中按此键切换到 Viewer；详情中关闭操作返回原 Workspace。保留同一 Workspace 实例或完整状态快照，不将它丢弃后以底部位置重建。
+沿用官方 `open_transcript`（默认 Ctrl+T）作为主动进入完整详情的操作。在 Workspace 中按此键进入 Viewer；沿用 Viewer 的关闭键返回 Workspace，不额外改写 Esc 的官方 backtrack 含义。
 
-状态至少包括：视口顶部 cell/相对行、选中 turn、折叠集合、跟随底部状态；Composer 继续归现有 ChatWidget 所有，不复制或清空草稿。详情期间的新消息按既有顺序追加，返回时保持原视口或原先的跟随底部状态。
+**采用单一活动 overlay 的模式切换，不保存第二个脱离更新的 Workspace 实例。** 同一 overlay 的 cells 接收分页 prepend、消息追加与活动尾部更新；进入详情只保存 Workspace 的视图状态，切换内容 renderer 并使布局缓存失效。返回时从最新内容恢复视图，不重新按“默认底部”初始化，不创建第二套历史订阅或输出副本。
+
+保存状态包含 thread ID、视口锚定 cell 身份与相对行、选中 turn、折叠集合和跟随底部状态。锚点不能只保存数组下标；prepend 后通过仍存在的 cell 身份恢复，数据重投影时使用既有 item/turn ID 映射。窗口宽度变化时按新布局夹紧相对行，保持锚定内容可见。Composer 和附件继续归现有 ChatWidget 所有，不复制或清空。
+
+详情期间旧页追加到同一历史集合；返回可继续浏览这些旧页且不重复请求已载入页。非跟随模式保持原锚点，跟随模式显示最新底部；Viewer 自己的滚动不覆盖保存的 Workspace 状态。历史被回退而锚点删除时，定位同一 turn 的有效邻近内容；该 turn 已删除则定位最近仍存在的前序 turn，无前序时使用剩余历史起点。明确这是内容删除后的恢复规则，不用于正常 prepend。
+
+| 转换 | 终端与状态契约 |
+| --- | --- |
+| Workspace → Viewer | 保持备用屏幕；清除旧布局的图片并按 Viewer 重绘；输入由 Viewer 处理，保留 Workspace 草稿 |
+| Viewer → Workspace | 不调用完整 `close_transcript_overlay`；保留备用屏幕，恢复 Workspace 鼠标捕获、图片和 Composer，恢复保存的视图状态 |
+| 真正退出 overlay / 应用 | 才调用完整清理：关闭捕获、清除图片、退出备用屏幕、处理 deferred history |
+| 切换 thread / fork / 新会话 | 清除旧 thread 的恢复状态，走已有会话初始化；不得恢复旧会话内容或草稿到新会话 |
+
+当前 `close_transcript_overlay` 会执行全量终端清理，不能直接复用为详情返回。修改仅限区分上述模式转换与最终关闭；不重写全局终端生命周期。
+
+### 4.6 非命令事件范围
+
+切换 `HistoryCell` 默认委托不等于所有持久化类型自动获得官方 renderer。当前 `fallback_transcript_cell` 将 WebSearch/MCP/FileChange 等转成普通文本，必须逐类说明范围。
+
+| 类型 | 本次实施范围 | 验收边界 |
+| --- | --- | --- |
+| CommandExecution | live、resume、分页正常展示及主动详情均按 4.2 实施 | 对应入口官方 golden + 数据完整性 |
+| WebSearch | 截图包含此行为；交互式 adapter 复用官方 WebSearch cell 构建，保留协议可用字段；live 正常展示复用现有官方路径 | 运行中与完成态分开对照；resume、分页不再显示自定义 `web search:` fallback；导出/picker 不变 |
+| MCP、DynamicTool、CollabAgent、FileChange | live 已有 cell 随默认 display 委托使用正常展示；持久化 fallback 本轮保持现状，不扩写这些类型的 replay | 增加原有输出回归保护；不得宣称这些类型已完成跨入口官方一致性 |
+| UserMessage、AgentMessage、Plan、Reasoning | 保留现有构建、可见性与布局语义 | 正文、轮次边界、折叠、超链接和可见性不回归 |
+| ImageView、ImageGeneration、Hook、Review、Compaction、其余现有类型 | 保留既有类型处理与持久化 fallback；不新增协议字段或工具功能 | 已有图片能力必须不回归；未支持的历史图片能力不包装成本次已实现 |
+
+验收结论必须限定为“CommandExecution 与 WebSearch 对应入口官方展示对齐，其余类型保留上述现状”，不能再写“全部事件完全一致”。
 
 ## 5. 文件范围与职责
 
@@ -155,9 +194,9 @@ Workspace 不再把整组 pager 的 page_up/page_down 别名作为导航入口�
 | `codex-rs/tui/src/pager_overlay/scrolling.rs`、`pager_overlay.rs` | 正常内容渲染、缓存、导航与锚点 |
 | `codex-rs/tui/src/app_backtrack.rs`、`app_backtrack/workspace_input.rs`、`app_backtrack/legacy_input.rs` | 活动尾部、Composer 路由、详情往返 |
 | `codex-rs/tui/src/exec_cell/model.rs`、`render.rs`、`mod.rs` | 移除 skill presentation，恢复官方正常/详情边界 |
-| `codex-rs/tui/src/thread_transcript.rs`、`app/history_pagination.rs` | 持久化命令正常展示与详情保留、跨页一致性 |
+| `codex-rs/tui/src/thread_transcript.rs`、`app/history_pagination.rs` | 持久化命令与 WebSearch 投影、单份输出、详情与跨页一致性 |
 | `codex-rs/tui/src/chatwidget.rs`、`chatwidget/{constructor,exec_state,command_lifecycle,skills,protocol_requests}.rs` | 定向撤除展示状态；保留官方技能功能 |
-| `codex-rs/tui/src/app/{background_requests,thread_routing,event_dispatch}.rs`、`app_event.rs` | 撤除展示专属 RPC/ticket/失效接线 |
+| `codex-rs/tui/src/app/{background_requests,thread_routing,event_dispatch}.rs`、`app_event.rs` | 撤除展示专属 RPC/ticket/失效接线；会话切换清除详情恢复状态 |
 | `codex-rs/tui/src/workspace_skill_output.rs`、`workspace_skill_output_tests.rs`、`lib.rs` | 删除废弃模块及注册；测试迁移到实际显示/输入边界 |
 | `codex-rs/shell-command/src/bash.rs`、TUI Cargo.toml、Cargo.lock、MODULE.bazel.lock | 仅删除无消费者的本次专用 helper/依赖并刷新锁 |
 | `codex-rs/tui/src/{thread_transcript_tests,pager_overlay_transcript_workspace_tests}.rs`、`chatwidget/tests/{exec_flow,history_replay}.rs`、`app/tests/transcript_composer.rs` | 真实投影、App 按键与三表面回归 |
@@ -166,38 +205,108 @@ Workspace 不再把整组 pager 的 page_up/page_down 别名作为导航入口�
 
 ## 6. 实施任务与提交边界
 
-### 任务 A：建立正确的对比基线
+### 6.1 TDD 执行规则
 
-- [ ] 保存固定上游的 renderer、parser、keymap 与官方输出快照证据，记录 SHA。
-- [ ] 用真实 parser/actions 构造同一事件 fixture，覆盖 Read、List、Search、普通命令和 UserShell；原始正文含唯一 sentinel。
-- [ ] 添加 `workspace_parity_` 测试，证明当前 Workspace 的完整输出不等于官方正常展示；添加 `workspace_input_` 测试，经 App 入口键入 `hello world`，证明空格被消费。RED 必须是可执行断言失败，不把编译错误/0 tests 当复现。
-- [ ] 正常展示用固定上游 golden；详情用当前原始数据契约。不要从修改后的 renderer 自动生成并无审查接受全部 golden。
+每个行为单独完成以下闭环，不采用“先改完 B/C/D，最后补测试”：
 
-### 任务 B：修正默认内容并撤除 skill 特判
+1. **RED：** 先添加一个通过真实入口观察行为的测试。在未修复实现上执行，记录可执行断言失败、actual/expected、命令、退出码和基线 SHA。编译失败、认证失败、0 tests、只生成未审查快照均不算 RED。
+2. **GREEN：** 只修改让该断言成立所需的代码；重跑相同测试及其相关回归。不能降低断言、修改官方 golden 或加测试专用生产分支来变绿。
+3. **REFACTOR：** 绿色后才删除本目标造成的重复或废弃状态，重跑相关行为测试。不要测试“某段源码/符号不存在”，改为保护其消费者行为。
+4. **持久化：** 一个可独立回滚的行为及测试完成后提交，再进入下一项。RED 证据保存在任务记录中；不把已知失败的测试单独作为完成态提交。
 
-- [ ] 按 4.1 节接入正常 display，活动尾部同步；移除 ExecCell skill override。
-- [ ] 按 4.3 节收拢废弃状态，逐文件核对官方功能未被移除。
-- [ ] 验证 SKILL.md、参考文档、README、源码均按官方摘要，catalog 未到达也不回退全量正文；普通命令仍是官方有限预览。
-- [ ] 运行对应 RED 与 ExecCell 正常/详情回归，审查快照，提交 `fix: 让 Workspace 复用官方聊天展示`。
+已经满足的契约只添加 characterization/regression 测试，记录“基线已通过”，不人为制造红灯，不声称它是修复证据。新旧行为由不同测试承担，例如“旧分页正文展开”应当 RED，“现有导出格式保持”可以一直 GREEN。
 
-### 任务 C：修正历史投影与详情往返
+预期值来自固定上游独立生成并人工核对的 golden 或协议 fixture 的字面量；不能让被测本地 renderer 同时计算 actual 和 expected。对动态耗时使用固定事件 duration，对路径使用测试夹具路径；不删除样式、链接或关键字段以掩盖差异。使用真实 parser 产生 actions，实际文件读取场景创建真实临时文件；只替代外部网络/模型响应，不 mock App 路由、历史投影和 renderer。
 
-- [ ] 按 4.2 节重建历史命令正常展示；复用原详情格式，校验 item cwd 和 source 保留。
-- [ ] 按 4.5 节接入 Ctrl+T 正常/详情往返并保持草稿、附件、折叠和锚点。
-- [ ] 通过真实 resume App 入口和旧页 prepend 验证相同事件的正常展示一致，详情仍含 sentinel、状态与耗时（若原记录具有该字段）。
-- [ ] 覆盖页边界连续 Read、浏览期间新消息和窗口变窄场景，提交 `fix: 统一恢复历史和详情视图的展示边界`。
+### 任务 A：准备官方与本地基线（随第一个完整行为提交）
 
-### 任务 D：修正输入、弹窗和导航
+**文件：** 既有 `chatwidget/tests/{exec_flow,history_replay}.rs`、`thread_transcript_tests.rs`、`app/tests/transcript_composer.rs` 及其快照。只增加完成本次行为测试需要的测试夹具，不建立通用新测试框架。
 
-- [ ] 按 4.4 节限定 Workspace 导航键，保留官方 Viewer 的键位。
-- [ ] App 入口输入测试同时断言：草稿精确等于预期文本，历史锚点不变；不只断言 handler 的返回值。
-- [ ] 验证空/非空草稿、Shift+Space、输入法/粘贴、Ctrl+B/F/U、Ctrl+C、弹窗导航、鼠标滚轮和 PageUp/PageDown。
-- [ ] 提交 `fix: 让 Workspace 空格与编辑键进入输入框`。
+- [ ] 保存官方 SHA、renderer/lifecycle/keymap 证据；官方对照在独立临时源码目录中验证，不切换用户分支，不依赖变化中的 upstream/main。
+- [ ] 分开准备 live、completion-only、resume 的 golden；每份记录输入事件、宽度、路径和时间规范化规则。
+- [ ] 先运行现有相关回归，保存通过/失败清单；后续不得用失败数量相同代替归因。
+- [ ] 按下列 B–F 逐个补失败测试；测试名称统一 `workspace_parity_` 或 `workspace_input_`，第 7.2 节先枚举后执行，核对非零发现数量。
 
-### 任务 E：包与运行态验收
+### 任务 B：默认内容与 skill 特判（TDD）
 
-- [ ] 完成第 7 节所有自动化、快照与真实终端验收，记录通过/失败/未验证。
-- [ ] 更新实施记录及遗留问题；必要的纯机械清理独立提交。未经明确要求不 push、不部署。
+**修改文件：** `history_cell/mod.rs`、`exec_cell/{mod,model,render}.rs`、`pager_overlay/scrolling.rs`，以及 4.3 列出的旧状态接线。**测试文件：** `chatwidget/tests/exec_flow.rs`、`pager_overlay_transcript_workspace_tests.rs`。
+**输入/输出契约：** 输入真实命令事件；输出 Workspace 正常行、详情行及对应测量高度。复用现有 `workspace_transcript_hyperlink_lines(width)`，不增加平行 renderer。
+
+- [ ] RED：添加 `workspace_parity_live_read_default_display`：独立 sed 读取真实 SKILL.md/README，正文含 sentinel；Workspace 全量 Line/Span/链接等于官方正常 golden，详情保留原正文。当前预期因正文展开或旧 skill 门控失败。
+- [ ] 在修改共用默认委托前，同样为 `workspace_parity_live_command_preview` 建立 RED：输入包含 100 行输出的普通命令及 UserShell，逐个对照对应官方 golden，当前预期因完整输出替代有限预览而失败。
+- [ ] GREEN：按 4.1 改默认委托及活动尾部，移除 ExecCell 特判；运行该测试直到通过。
+- [ ] GREEN：重跑 Read 与普通命令/UserShell 两组 RED；只修默认展示，不改官方截断算法。
+- [ ] REFACTOR：在测试绿色保护下按 4.3 删除旧状态机，保护技能选择/注解/配置与原详情；80/120/窄屏快照及测量回归通过后提交 `fix: 让 Workspace 复用官方聊天展示`。
+
+### 任务 C：命令历史、分组与输出所有权（TDD）
+
+**修改文件：** `thread_transcript.rs`、`app/history_pagination.rs`，仅确有必要时增加 ExecCell 的 crate 内借用访问。**测试文件：** `thread_transcript_tests.rs`、`chatwidget/tests/history_replay.rs`、`app/tests/transcript_composer.rs`。
+**输入/输出契约：** 输入带 item/turn ID、cwd、actions、source、可选状态与输出的持久化 items；输出按官方完成事件构建的正常 cell，详情按需读取同一输出。导出/picker 不接入交互式投影。
+
+- [ ] RED：`workspace_parity_persisted_read_default_display` 经真实历史响应载入两条完成 Read；对照官方 replay golden，当前应因 `$ command`/正文出现在默认页而失败。
+- [ ] GREEN：按 4.2 采用单份输出的命令投影，不保存正常 ExecCell 与完整详情行两份正文；运行上项直到通过。
+- [ ] 保护分组：`workspace_parity_persisted_page_partition` 对同一 turn 的 Read A、Read B、普通命令、Read C，以及下一 turn 的 Read D，比较一次载入与逐个接缝拆页载入；比较 cell 顺序/分组/turn 归属/完整显示。两边也各自对照官方 replay golden，不能只让两份同样错误的本地结果相等。
+- [ ] 保护生命周期：`workspace_parity_completion_only_not_live_group`、`workspace_parity_orphan_preserves_active_call` 分别对照官方完成事件、orphan golden；已有通过项标为基线保护，不强求 RED，不增加跨页 `add_call`。
+- [ ] RED/GREEN：`workspace_parity_persisted_detail_duration` 使用 duration=1250ms 与 None 两个记录，分别断言有真实耗时／无伪造耗时；完整输出、status、可选 exit_code 同时保留。增加 `workspace_parity_export_picker_unchanged` 保护原 fallback，预期可基线通过。
+- [ ] GREEN 后进行第 7.5 节大输出存储检查；测试通过后提交 `fix: 对齐命令历史展示并保留单份输出`。
+
+### 任务 D：截图中的 WebSearch 与范围保护（TDD）
+
+**修改文件：** `thread_transcript.rs` 中交互式投影，复用官方已有 WebSearch cell，不改协议/导出入口。**测试文件：** `thread_transcript_tests.rs`、`chatwidget/tests/history_replay.rs`、`app/tests/transcript_composer.rs`。
+**输入/输出契约：** 输入官方支持的 WebSearch 事件及持久化 item；正常行使用对应官方 renderer，详情仅展示现有记录支持的信息。
+
+- [ ] RED：`workspace_parity_websearch_persisted_display` 将同一搜索通过 resume 与旧页响应载入，对照固定官方完成态 golden；当前分页预期因自定义 `web search:` 行失败。
+- [ ] GREEN：仅交互式 WebSearch adapter 构造官方 cell，删除该入口的普通文本替代，不改其它 fallback。
+- [ ] 回归：`workspace_parity_websearch_live_display` 以独立运行中/完成事件对照官方；`workspace_parity_other_fallback_preserved` 按 4.6 逐类保护保留范围。已满足的断言记为基线保护。
+- [ ] 审阅包含 Read、WebSearch、助手最终回答的组合快照后提交 `fix: 对齐 Workspace 搜索历史展示`。
+
+### 任务 E：详情往返、历史同步和终端状态（TDD）
+
+**修改文件：** `pager_overlay.rs`、`pager_overlay/scrolling.rs`、`app_backtrack.rs`、相关输入文件及会话切换接线。**测试文件：** `app/tests/transcript_composer.rs`、`pager_overlay_transcript_workspace_tests.rs`。
+**输入/输出契约：** 通过 `App::handle_tui_event` 切换模式、真实分页/追加入口更新同一 overlay；输出包含当前模式、可见历史、Composer/附件、折叠与锚点。最终关闭和模式返回分别处理。
+
+- [ ] RED：`workspace_parity_details_roundtrip` 在旧 turn 停留，输入草稿、附图并折叠一个 turn；按 Ctrl+T 后通过 Viewer 关闭键返回，断言正常 renderer 恢复且保存状态保持。当前应因未实现往返契约失败。
+- [ ] GREEN：按 4.5 增加同一 overlay 的模式切换和小量视图状态保存，不复制完整 cell 集合或输出。
+- [ ] RED/GREEN：依次补 `workspace_parity_details_prepend_sync`、`workspace_parity_details_append_anchor`、`workspace_parity_details_follow_bottom`；详情期间分别加载旧页、追加新消息，返回检查内容一次出现、锚点/跟随行为和下一次分页 cursor。状态同步若已通过，只记回归证据。
+- [ ] RED/GREEN：`workspace_parity_details_resize_restore` 与 `workspace_parity_details_thread_change` 覆盖变窄、切 thread/fork、锚点删除；逐个按 4.5 的恢复规则断言，不用“overlay 还在”代替可见内容验证。
+- [ ] 终端回归 `workspace_parity_details_terminal_lifecycle`：PTY 捕获往返及最终退出，往返不得包含退出备用屏幕动作；返回恢复输入/鼠标捕获，最终退出才完整清理。图片另按 7.4 取得 iTerm2 证据，不用 mock 图片存在冒充屏幕验证。
+- [ ] 相关测试绿色、审阅窄屏快照后提交 `fix: 保持详情往返的历史与终端状态`。
+
+### 任务 F：空格、编辑和弹窗路由（TDD）
+
+**修改文件：** `app_backtrack/workspace_input.rs`、`pager_overlay/scrolling.rs` 中 Workspace 专属导航与分页判断；不改 Composer 官方编辑逻辑。**测试文件：** `app/tests/transcript_composer.rs`、`pager_overlay_transcript_workspace_tests.rs`。
+
+- [ ] RED：先添加下方 `workspace_input_space_reaches_composer`，再补 `workspace_input_typing_preserves_anchor` 在真正可滚动的旧 turn 输入 `hello world`，同时断言准确草稿及锚点不变。
+- [ ] GREEN：按 4.4 限定导航键；用原 RED 命令确认空格进入 Composer，而不是只检查 handler 返回 false。
+- [ ] RED/GREEN：`workspace_input_popup_owns_navigation` 在弹窗打开时按 PageUp/Down、Space；断言弹窗自身行为正确、底层草稿/锚点不变且未请求旧页。使用实际请求通道/fixture server 捕获请求，不 mock 被测路由。
+- [ ] 回归 `workspace_input_edit_navigation_matrix`：首字符空格、连续空格、Shift+Space、中文粘贴、Ctrl+B/F/U、左右/Home/End、Ctrl+C 分项断言；另测 Workspace PageUp/Down/滚轮可用、Viewer 空格仍翻页。输入法组合态用实际终端补验。
+- [ ] 相关测试绿色后提交 `fix: 让 Workspace 空格与编辑键进入输入框`。
+
+首个 RED 可直接放入现有 `app/tests/transcript_composer.rs`，复用已存在的真实 App 测试设施（本段是待写测试代码，不是已运行结果）：
+
+```rust
+#[tokio::test]
+async fn workspace_input_space_reaches_composer() -> Result<()> {
+    let (mut app, _app_event_rx, _op_rx) = make_test_app_with_channels().await;
+    app.local_settings.tui.transcript_workspace = true;
+    let mut app_server = start_config_write_test_app_server(&app).await?;
+    let mut tui = crate::tui::test_support::make_test_tui()?;
+    let session = test_thread_session(ThreadId::new(), app.config.cwd.to_path_buf());
+    app.chat_widget.handle_thread_session(session);
+    app.open_transcript_overlay(&mut tui);
+    app.chat_widget.apply_external_edit("hello".into());
+    press_key(&mut app, &mut tui, &mut app_server, KeyCode::Char(' ')).await?;
+    assert_eq!(app.chat_widget.composer_text_with_pending(), "hello ");
+    Ok(())
+}
+```
+
+其余测试按上面具名用例中的输入、真实入口与断言逐项实现；复用同目录现有 fixture。不要为测试新增生产专用 getter、清理接口或改变执行结果。该空格单测只证明字符送达，不替代长历史视口与终端验收。
+
+### 任务 G：包与运行态验收
+
+- [ ] 完成第 7 节自动化、快照与真实终端验收，逐项记录通过/失败/未验证。
+- [ ] 更新实施记录及遗留问题；未经明确要求不 push、不部署、不扩大到其它历史类型。
 
 ## 7. 如何验收
 
@@ -211,10 +320,17 @@ Workspace 不再把整组 pager 的 page_up/page_down 别名作为导航入口�
 | curl 大输出、编译成功/失败、UserShell | 标题、颜色、有限预览、折叠提示与固定上游一致 |
 | Pending、Completed+None、非零退出码、Declined、UnifiedExecInteraction | 逐个与官方行为比较，不复用旧 skill 成功门控期望 |
 | begin/end、orphan、completion-only、resume、分页 | 同一事件语义不因入口变化而变成完整默认输出 |
+| 完成态 Read 跨页 | 一次载入与每个接缝拆页载入均对照官方 replay；不拿 live 分组作历史预期 |
+| WebSearch 运行中/完成态/resume/分页 | 分别匹配对应官方正常展示；分页不能残留自定义 fallback |
+| 其余持久化类型 | 按 4.6 保留范围做回归，不冒充全类型官方对齐 |
+| 历史详情有/无 duration、有/无 exit_code | 原值保留、缺失不伪造；导出/picker 不变 |
 | `hello world`、连续空格、首字符空格、Shift+Space | 草稿保留准确空格，滚动位置不变 |
 | Ctrl+B/F/U、左右/Home/End、Ctrl+C | Composer 行为与既定官方编辑规则一致 |
 | 弹窗、问题面板、技能选择器 | 导航和选择不会被底层 Workspace 抢走 |
 | Ctrl+T 详情往返 | 详情完整；返回时草稿、附件、折叠集合和锚点相同 |
+| 详情期间 prepend/append | 返回看到最新历史，旧页不丢不重复，分页 cursor 与锚点正确；跟随底部单独断言 |
+| 详情期间 resize/回退/thread 切换 | 按 4.5 恢复或清除视图状态，不能带回旧会话状态 |
+| 详情返回/最终退出 | 返回不退出备用屏幕，鼠标和 Composer 恢复；真正退出才清理终端 |
 | 80/120/窄屏宽度，长文件名、中文、超链接 | 行内容、样式、换行与高度测量匹配；无错位、缺行 |
 | 浏览旧轮次时产生新输出 | 不跳底、不改变 Composer；原先跟随底部则继续跟随 |
 
@@ -235,6 +351,28 @@ just test -p codex-shell-command
 just bazel-lock-update
 just bazel-lock-check
 ```
+
+单项 TDD 示例，在实现空格修复前先执行以下命令；GREEN 和该行为 REFACTOR 后使用同一命令。其余任务将过滤项替换为第 6 节对应的完整测试名：
+
+```sh
+cargo nextest list --manifest-path "codex-rs/Cargo.toml" -p codex-tui -E 'test(~workspace_input_space_reaches_composer)'
+just test -p codex-tui -E 'test(~workspace_input_space_reaches_composer)'
+```
+
+必须确认精确目标已被发现并执行；不以总计有其它测试运行替代。预期 RED 为 `"hello" != "hello "` 的草稿断言失败；如果是不同原因，先修测试条件再执行，不改预期来迎合实现。若当前代码已能通过，标为已保护，并以实际未满足的长历史场景建立 RED。
+
+每个任务提交前在实施记录填写以下证据（无证据不勾选）：
+
+| 项目 | 必填内容 |
+| --- | --- |
+| 用例及目标缺陷 | 第 6 节测试名、会捕获的错误行为 |
+| RED | 实现修改前 SHA + 测试 diff 标识、命令、发现/执行数量、退出码、关键 actual/expected、日志位置 |
+| GREEN | 同一测试和相关回归的命令/数量/退出码、实现 diff 标识、日志位置 |
+| REFACTOR | 是否发生目标内清理、清理后测试结果；未清理写“无” |
+| 独立预期 | 官方 SHA、fixture、golden 或人工核对的协议字段 |
+| 提交/未覆盖 | 行为提交 SHA；真实终端、iTerm2 或性能尚未覆盖的项目 |
+
+日志只保留本任务需要的测试证据，避免写入认证信息；不能把文档中的预期失败、示例命令当作已执行日志。通过了原问题测试仍须运行相关 crate 回归；因环境无法运行则记录阻塞，不勾选 GREEN。
 
 快照在 `codex-rs` 下执行 `cargo insta pending-snapshots`（本机该版本不接受 `-p`），逐个审阅，仅接受本次相关快照。既有两个 custom_terminal `.snap.new` 与未跟踪旧方案不纳入提交。
 
@@ -258,6 +396,8 @@ just bazel-lock-check
 
 - [ ] 官方基线与本地包执行同一事件场景，记录两者截图或 PTY 帧，不以两次模型随机选择不同命令作唯一对照。
 - [ ] 正常默认界面复现图 #2 的 Read 摘要；打开详情能看到完整 sentinel，返回仍保持草稿。
+- [ ] 同一场景含 WebSearch 运行中/完成态；恢复会话和上翻旧页后核对官方对应展示，不只验 sed。
+- [ ] 详情期间接收新输出并载入旧页，再返回 Workspace；检查草稿、附件、折叠、锚点、滚轮及图片，最后正常退出检查终端恢复。
 - [ ] 在旧轮次键入 `hello world` 与中文含空格句子，确认空格输入、视口不跳底。
 - [ ] 完成轮次折叠/展开、Ctrl+C/U、PageUp/PageDown、滚轮和窗口缩放检查。
 - [ ] iTerm2 验证本地图片预览和退出后的终端恢复。
@@ -267,6 +407,7 @@ just bazel-lock-check
 ### 7.5 性能与内存
 
 - [ ] 同机器、同 fixture 对修改前后 10,000 个普通 cell + 100 个读取 cell 的首次展示、滚动、折叠、详情往返采样，记录原始耗时和峰值/RSS。
+- [ ] 另用单条 8MiB 普通命令输出和同样大小 Read 输出，走真实持久化投影；依次观察构建后、正常渲染后、打开详情并释放临时行后、30 次往返后。用分配分析记录或测试侧计量定位长期保留分配，确认没有增加一份与输出体积成比例的详情字符串集合。比较同样的底层历史存储基线，不能把原有会话记录计算为本轮新副本；短暂 renderer 分配与长期持有分开报告。
 - [ ] 单次操作中位耗时若回退超过 20% 且绝对增加超过 10ms，先定位再交付；不以全量重建 renderer 的方式处理每次按键。
 - [ ] 连续详情/Workspace 往返 30 次后释放 overlay，引用不得遗留；第 10→30 次 RSS 持续增长超过 10MiB 时排查所有权，不能仅用 allocator 高水位判断泄漏。
 - [ ] 不因渲染而解析 shell、读文件、计算哈希或发 RPC；不为普通命令新增输出副本。
@@ -281,6 +422,8 @@ just bazel-lock-check
 6. **范围：** 只撤除此前展示特判，不整体重置仓库，不覆盖用户变更，不顺带升级依赖或上游。不得改系统 codex、shell 配置或 iTerm2 设置。
 7. **验证一致：** 不使用 cfg(test) 放宽生产门控，不手写与真实事件不同的 action 来让测试通过，不把 0 tests、启动首屏或旧包版本作为验收成功。
 8. **交付诚实：** 未取得官方对照、真实空格输入、resume/分页或 iTerm2 证据时逐项列明；不能再次凭专项绿色宣称全部完成。
+9. **TDD：** 行为修复先取得真实断言 RED，再改生产代码；不倒补日志，不把基线已通过的回归说成失败复现，不为追求红灯改坏原本正确的行为。
+10. **所有权与模式：** 不长期保存 ExecCell 输出和详情正文两份，不保存脱离更新的第二套 Workspace 历史；模式返回不得执行最终关闭的全量清理。
 
 ## 9. 回滚与交付物
 
@@ -290,9 +433,21 @@ just bazel-lock-check
 
 - [ ] 本方案的逐项完成状态与实施提交 SHA。
 - [ ] 官方正常展示、默认 Workspace、完整详情的对比快照。
+- [ ] 各行为 RED/GREEN/REFACTOR 证据；独立官方 golden 来源；基线已通过的回归单独标识。
 - [ ] 空格/编辑/导航 App 入口断言，以及用户可见的实际输入证据。
 - [ ] 初始 resume、分页、活动尾部和详情往返证据。
 - [ ] 新包构建退出码、哈希与实际进程路径。
 - [ ] 性能采样、全量失败归因、仍未覆盖的运行态项。
 
 当前仅完成本方案编写和只读源码核验。未执行上述实施任务；不以本文更新改变既有代码或运行中的用户会话。
+
+## 10. 本次方案修订记录
+
+| 审查问题 | 修订决策 | 对应验证 |
+| --- | --- | --- |
+| 官方 replay 与强制连续分组冲突 | 区分 live、completion-only、orphan、resume；分页不新增跨页合并 | 任务 C：独立官方 golden、逐接缝拆页、turn 归属 |
+| 详情返回遗漏历史更新与终端状态 | 同一 overlay 切换模式，保存视图状态；区分返回与最终关闭 | 任务 E：prepend、append、resize、切会话、PTY 及 iTerm2 |
+| ExecCell 与原详情行形成双份输出 | ExecCell 单份持有，详情按需临时生成；仅保存小量原始元数据 | 任务 C 与 7.5：数据完整、大输出长期分配检查 |
+| 非命令事件目标大于实现范围 | WebSearch 纳入本次；其它类型逐类列出保留范围 | 任务 D 与 4.6：搜索跨入口、其余 fallback 回归 |
+
+本轮仅修改本方案。检查包括修订前后 diff、四项审查追踪、测试输入/断言/执行顺序自审及 Markdown 结构检查；不为文档编写虚假的行为测试，不运行功能构建来冒充方案验收。实施任务、TDD 日志、功能测试和运行态验收均未执行。
