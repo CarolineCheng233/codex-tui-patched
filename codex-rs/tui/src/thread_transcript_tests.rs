@@ -23,6 +23,37 @@ fn joined_workspace_lines(cell: &dyn HistoryCell) -> String {
         .join("\n")
 }
 
+fn completed_read(
+    cwd: &codex_utils_absolute_path::AbsolutePathBuf,
+    id: &str,
+    path: &str,
+    output: &str,
+) -> ThreadItem {
+    let command = vec![
+        "sed".to_string(),
+        "-n".to_string(),
+        "1,240p".to_string(),
+        path.to_string(),
+    ];
+    ThreadItem::CommandExecution {
+        id: id.to_string(),
+        plugin_id: None,
+        script_path: None,
+        command: codex_shell_command::parse_command::shlex_join(&command),
+        cwd: cwd.clone().into(),
+        process_id: None,
+        source: CommandExecutionSource::Agent,
+        status: CommandExecutionStatus::Completed,
+        command_actions: codex_shell_command::parse_command::parse_command(&command)
+            .into_iter()
+            .map(|parsed| CommandAction::from_core_with_cwd(parsed, cwd))
+            .collect(),
+        aggregated_output: Some(output.to_string()),
+        exit_code: Some(0),
+        duration_ms: Some(1),
+    }
+}
+
 #[test]
 fn workspace_parity_persisted_read_default_display() {
     let cwd = test_path_buf("/tmp/workspace-persisted-read").abs();
@@ -106,6 +137,53 @@ fn generic_persisted_command_projection_keeps_the_full_fallback() {
     let rendered = joined_workspace_lines(cells[0].as_ref());
     assert!(rendered.starts_with("$ sed"));
     assert!(rendered.contains("GENERIC_FALLBACK_BODY_SENTINEL"));
+}
+
+#[test]
+fn workspace_parity_persisted_page_partition() {
+    let cwd = test_path_buf("/tmp/workspace-page-partition").abs();
+    let first = completed_read(
+        &cwd,
+        "first-read",
+        "/tmp/demo/SKILL.md",
+        "FIRST_READ_BODY_SENTINEL\n",
+    );
+    let second = completed_read(
+        &cwd,
+        "second-read",
+        "/tmp/demo/README.md",
+        "SECOND_READ_BODY_SENTINEL\n",
+    );
+    let one_page = workspace_thread_items_to_transcript_cells(
+        None,
+        &cwd,
+        [first.clone(), second.clone()],
+        RawReasoningVisibility::Hidden,
+        None,
+    );
+    let split_pages = [first, second]
+        .into_iter()
+        .flat_map(|item| {
+            workspace_thread_items_to_transcript_cells(
+                None,
+                &cwd,
+                [item],
+                RawReasoningVisibility::Hidden,
+                None,
+            )
+        })
+        .collect::<Vec<_>>();
+
+    assert_eq!(
+        one_page
+            .iter()
+            .map(|cell| joined_workspace_lines(cell.as_ref()))
+            .collect::<Vec<_>>(),
+        split_pages
+            .iter()
+            .map(|cell| joined_workspace_lines(cell.as_ref()))
+            .collect::<Vec<_>>(),
+    );
 }
 
 #[test]
