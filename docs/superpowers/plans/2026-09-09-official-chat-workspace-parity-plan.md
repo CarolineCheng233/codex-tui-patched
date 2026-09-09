@@ -463,7 +463,7 @@ just test -p codex-tui -E 'test(~workspace_input_space_reaches_composer)'
 | 详情往返、锚点、线程隔离与备用屏 | 已完成代码/专项测试 | `0a6d98e589`、`c3ee81391d`、`a583be1a9a`、`06dfcee580`、`ddab83bea0`；草稿、q 返回、prepend/append、跟随底部、缩放、锚点删除、新线程切换，以及“返回不退出备用屏、最终关闭才退出”的 App 入口回归通过 | 原始 PTY 控制序列捕获、图片和真实 iTerm2 视觉验收 |
 | Workspace 专项集 | 已通过 | `just test -p codex-tui -E 'test(~workspace_parity_) | test(~workspace_input_) | test(~workspace_details_)'`：17 通过、4346 跳过、退出码 0 | 输入法组合态、完整编辑键矩阵和真实终端输入 |
 | 本地包 | 已完成构建完整性核验 | 功能代码 `06dfcee580`（构建时 HEAD `3848ea7f69`）；`./scripts/build-patched-tui.sh` 退出码 0，release/package SHA-256 均为 `a2e10f…e97db73`，生成时间 `2026-09-09T18:48:33Z`；系统 Codex SHA-256 保持 `b973d4…1261e3` | 新 TUI 进程的实际交互与 iTerm2 图片显示证据 |
-| 全量 TUI | 未通过，当前 HEAD 待复跑 | `b80f07f49e` 上全量：4334 通过、26 失败、6 跳过、1 慢测、退出码 100；其中 `transcript_workspace_routes_typing_and_ctrl_c_to_the_existing_composer` 是过期 Ctrl+T 关闭断言，已由 `37a8121e50` 修正并精确通过 | 在当前 HEAD 重跑全量，以确认其余 25 项是否仍失败；再在本轮之前基线或独立环境逐项归因，不能宣称无关 |
+| 全量 TUI | 未通过，25 项未归因 | `774afd404a` 上全量：4335 通过、25 失败、6 跳过、1 慢测、退出码 100、耗时 1034.633 秒；原先失败的 `transcript_workspace_routes_typing_and_ctrl_c_to_the_existing_composer` 已不在失败集 | 在本轮之前基线或独立环境逐项归因；不能宣称其余 25 项无关 |
 
 本次实现提交顺序：`737d74165e`、`73dc9e30b7`、`e593e0d5c6`、`9b6b59dd16`、`0a6d98e589`、`a89c85f783`、`a583be1a9a`、`d6faeeb3d1`、`c3ee81391d`、`1918691b75`、`bc6245b979`、`06dfcee580`、`ddab83bea0`、`19fa1a38c6`。未跟踪的 custom-terminal `.snap.new` 和旧方案文件不属于本任务，保持原样且未提交。
 
@@ -475,6 +475,6 @@ just test -p codex-tui -E 'test(~workspace_input_space_reaches_composer)'
 
 `19fa1a38c6` 的 Home/End、Ctrl+B/F 用例也均为基线保护：分别以 `Xabc`→`XabcY` 和 `abXc`→`abXcY` 验证 Composer 光标移动与插入，两个精确过滤命令各为 1 通过、退出码 0。它们不替代输入法组合态与真实终端按键验收。
 
-`b80f07f49e` 的全量失败记录包含 app-server mock 的 usage/rate-limits/recap/safety-buffering/thread-title 请求失败，custom-terminal cursor 快照失败，resume-picker wiremock 失败，以及集成测试缺少 debug code-mode host 且本地 HTTP 响应流断开。该次 26 项中唯一落在本次 Workspace 测试文件的失败是上表已修正的旧 Ctrl+T 断言；这只能证明该项已修复，不能证明其余 25 项与本轮无关。
+`b80f07f49e` 的全量失败记录包含 app-server mock 的 usage/rate-limits/recap/safety-buffering/thread-title 请求失败，custom-terminal cursor 快照失败，resume-picker wiremock 失败，以及集成测试缺少 debug code-mode host 且本地 HTTP 响应流断开。该次 26 项中唯一落在本次 Workspace 测试文件的失败是上表已修正的旧 Ctrl+T 断言；当前 `774afd404a` 全量复跑证实该项消失，其余 25 项仍未获得改动前基线或独立环境归因。
 
 2026-09-09 GUI 证据：iTerm2 已运行，但 Computer Use 对 bundle ID `com.googlecode.iterm2` 明确返回策略拒绝。按 7.4 节红线停止 GUI 自动操作，未使用替代注入方式；该限制不影响已完成的自动化与包完整性证据，但 iTerm2 图片/真实按键视觉验收仍需用户手动完成。
