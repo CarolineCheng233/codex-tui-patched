@@ -139,52 +139,12 @@ impl ChatWidget {
     }
 
     pub(crate) fn set_skills_from_response(&mut self, response: &SkillsListResponse) {
-        self.workspace_skill_catalog.sync_response(response);
         self.apply_skills_response(response);
-    }
-
-    pub(crate) fn set_skills_from_current_ticket(
-        &mut self,
-        response: &SkillsListResponse,
-        ticket: &[crate::workspace_skill_output::WorkspaceSkillRefreshTicket],
-    ) -> bool {
-        if !self
-            .workspace_skill_catalog
-            .sync_response_if_current(response, ticket)
-        {
-            return false;
-        }
-        self.apply_skills_response_if_current_ticket(response, ticket);
-        true
     }
 
     fn apply_skills_response(&mut self, response: &SkillsListResponse) {
         let skills = skills_for_cwd(&self.config.cwd, &response.data);
         self.skills_all = skills;
-        self.set_skills(Some(enabled_skills_for_mentions(&self.skills_all)));
-    }
-
-    fn apply_skills_response_if_current_ticket(
-        &mut self,
-        response: &SkillsListResponse,
-        ticket: &[crate::workspace_skill_output::WorkspaceSkillRefreshTicket],
-    ) {
-        let cwd = codex_utils_path_uri::PathUri::from_abs_path(&self.config.cwd);
-        if !ticket.iter().any(|ticket| ticket.is_for_cwd(&cwd)) {
-            return;
-        }
-        let matching_entries = response
-            .data
-            .iter()
-            .filter(|entry| entry.cwd.as_path() == self.config.cwd.as_path())
-            .collect::<Vec<_>>();
-        let [entry] = matching_entries.as_slice() else {
-            return;
-        };
-        if !entry.errors.is_empty() {
-            return;
-        }
-        self.skills_all = entry.skills.clone();
         self.set_skills(Some(enabled_skills_for_mentions(&self.skills_all)));
     }
 

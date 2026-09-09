@@ -107,37 +107,6 @@ fn workspace_requests_older_history_only_for_upward_pager_navigation() {
 }
 
 #[test]
-fn workspace_catalog_invalidation_rebuilds_layout_without_moving_the_viewport() {
-    let cells = vec![
-        Arc::new(UserHistoryCell {
-            message: "first prompt".into(),
-            text_elements: Vec::new(),
-            local_image_paths: Vec::new(),
-            remote_image_urls: Vec::new(),
-        }) as Arc<dyn crate::history_cell::HistoryCell>,
-        Arc::new(PlainHistoryCell::new(vec![Line::from("first reply")]))
-            as Arc<dyn crate::history_cell::HistoryCell>,
-        Arc::new(UserHistoryCell {
-            message: "second prompt".into(),
-            text_elements: Vec::new(),
-            local_image_paths: Vec::new(),
-            remote_image_urls: Vec::new(),
-        }) as Arc<dyn crate::history_cell::HistoryCell>,
-    ];
-    let mut overlay =
-        TranscriptOverlay::new_workspace(cells, crate::keymap::RuntimeKeymap::defaults().pager);
-    overlay.ensure_workspace_layout_index(/*width*/ 80);
-    overlay.view.scroll_offset = 3;
-    let selected_turn = overlay.workspace_turns.selected_turn_start();
-
-    overlay.invalidate_workspace_catalog_view();
-
-    assert!(overlay.workspace_layout_index.is_none());
-    assert_eq!(overlay.view.scroll_offset, 3);
-    assert_eq!(overlay.workspace_turns.selected_turn_start(), selected_turn);
-}
-
-#[test]
 fn turn_state_folds_one_user_turn_and_preserves_its_selection() {
     let cells = vec![
         Arc::new(UserHistoryCell {

@@ -247,18 +247,11 @@ impl App {
         let request_handle = app_server.request_handle();
         let app_event_tx = self.app_event_tx.clone();
         let cwd = self.config.cwd.to_path_buf();
-        let ticket = self
-            .chat_widget
-            .begin_workspace_skill_catalog_refresh(&[cwd.clone()]);
         tokio::spawn(async move {
             let result = fetch_skills_list(request_handle, cwd.clone())
                 .await
                 .map_err(|err| format!("{err:#}"));
-            app_event_tx.send(AppEvent::SkillsListLoaded {
-                cwd,
-                ticket,
-                result,
-            });
+            app_event_tx.send(AppEvent::SkillsListLoaded { cwd, result });
         });
     }
 

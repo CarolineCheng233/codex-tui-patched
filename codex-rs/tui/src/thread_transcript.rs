@@ -1,12 +1,9 @@
 //! Render persisted thread turns into history-cell building blocks.
 
-use std::path::PathBuf;
 use std::sync::Arc;
 
 use crate::app_server_session::AppServerSession;
 use crate::app_server_session::HistoryHydrationScope;
-use crate::exec_cell::workspace_read_summary_lines;
-use crate::exec_command::split_command_string;
 use crate::git_action_directives::parse_assistant_markdown;
 use crate::history_cell::AgentMarkdownCell;
 use crate::history_cell::HistoryCell;
@@ -18,61 +15,16 @@ use crate::history_cell::split_reasoning_summary_parts;
 use crate::inline_visualization::InlineVisualizationContext;
 use crate::legacy_core::config::Config;
 use crate::multi_agents::sub_agent_activity_summary;
-use crate::terminal_hyperlinks::plain_hyperlink_lines;
-use crate::workspace_skill_output::WorkspaceSkillCatalog;
-use crate::workspace_skill_output::WorkspaceSkillReadPresentation;
-use crate::workspace_skill_output::classify_workspace_skill_read;
-use crate::workspace_skill_output::completion_outcome;
 use codex_app_server_protocol::Thread;
 use codex_app_server_protocol::ThreadItem;
 use codex_app_server_protocol::UserInput;
 use codex_protocol::ThreadId;
 use codex_protocol::items::UserMessageItem;
 use codex_utils_absolute_path::AbsolutePathBuf;
-use codex_utils_path_uri::PathUri;
 use ratatui::style::Stylize as _;
 use ratatui::text::Line;
 
 pub(crate) type TranscriptCells = Vec<Arc<dyn HistoryCell>>;
-
-pub(crate) struct WorkspaceTranscriptProjection {
-    pub(crate) cells: TranscriptCells,
-    pub(crate) required_skill_cwds: Vec<PathBuf>,
-}
-
-#[derive(Debug)]
-struct WorkspaceCommandHistoryCell {
-    lines: Vec<Line<'static>>,
-    workspace_skill_read: Option<WorkspaceSkillReadPresentation>,
-}
-
-impl HistoryCell for WorkspaceCommandHistoryCell {
-    fn display_lines(&self, _width: u16) -> Vec<Line<'static>> {
-        self.lines.clone()
-    }
-
-    fn raw_lines(&self) -> Vec<Line<'static>> {
-        self.lines.clone()
-    }
-
-    fn workspace_transcript_hyperlink_lines(
-        &self,
-        width: u16,
-    ) -> Vec<crate::terminal_hyperlinks::HyperlinkLine> {
-        let Some(summary) = self
-            .workspace_skill_read
-            .as_ref()
-            .and_then(WorkspaceSkillReadPresentation::summary)
-        else {
-            return plain_hyperlink_lines(self.lines.clone());
-        };
-        plain_hyperlink_lines(workspace_read_summary_lines(&[summary], width))
-    }
-
-    fn has_stable_transcript_height(&self) -> bool {
-        self.workspace_skill_read.is_none()
-    }
-}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum RawReasoningVisibility {
@@ -136,50 +88,6 @@ pub(crate) fn thread_items_to_transcript_cells(
     items: impl IntoIterator<Item = ThreadItem>,
     raw_reasoning_visibility: RawReasoningVisibility,
     config: Option<&Config>,
-) -> TranscriptCells {
-    thread_items_to_transcript_cells_with_workspace_catalog(
-        thread_id,
-        cwd,
-        items,
-        raw_reasoning_visibility,
-        config,
-        None,
-        None,
-    )
-}
-
-pub(crate) fn workspace_thread_items_to_transcript_cells_with_required_skill_cwds(
-    thread_id: Option<ThreadId>,
-    cwd: &AbsolutePathBuf,
-    items: impl IntoIterator<Item = ThreadItem>,
-    raw_reasoning_visibility: RawReasoningVisibility,
-    config: Option<&Config>,
-    workspace_skill_catalog: Arc<WorkspaceSkillCatalog>,
-) -> WorkspaceTranscriptProjection {
-    let mut required_skill_cwds = Vec::new();
-    let cells = thread_items_to_transcript_cells_with_workspace_catalog(
-        thread_id,
-        cwd,
-        items,
-        raw_reasoning_visibility,
-        config,
-        Some(workspace_skill_catalog),
-        Some(&mut required_skill_cwds),
-    );
-    WorkspaceTranscriptProjection {
-        cells,
-        required_skill_cwds,
-    }
-}
-
-fn thread_items_to_transcript_cells_with_workspace_catalog(
-    thread_id: Option<ThreadId>,
-    cwd: &AbsolutePathBuf,
-    items: impl IntoIterator<Item = ThreadItem>,
-    raw_reasoning_visibility: RawReasoningVisibility,
-    config: Option<&Config>,
-    workspace_skill_catalog: Option<Arc<WorkspaceSkillCatalog>>,
-    mut required_skill_cwds: Option<&mut Vec<PathBuf>>,
 ) -> TranscriptCells {
     let inline_visualization_context = config.and_then(|config| {
         thread_id.and_then(|thread_id| InlineVisualizationContext::from_config(config, thread_id))
@@ -275,63 +183,6 @@ fn thread_items_to_transcript_cells_with_workspace_catalog(
                         /*transcript_only*/ false,
                     )));
                 }
-            }
-            ThreadItem::CommandExecution {
-                command,
-                cwd,
-                source,
-                status,
-                command_actions,
-                aggregated_output,
-                exit_code,
-                ..
-            } if workspace_skill_catalog.is_some() => {
-                let raw_command = command.clone();
-                let command_argv = split_command_string(&command);
-                let parsed = command_actions
-                    .iter()
-                    .cloned()
-                    .map(codex_app_server_protocol::CommandAction::into_core)
-                    .collect::<Vec<_>>();
-                let workspace_skill_read = PathUri::try_from(cwd)
-                    .ok()
-                    .and_then(|cwd| {
-                        classify_workspace_skill_read(
-                            &raw_command,
-                            &command_argv,
-                            cwd,
-                            source,
-                            &parsed,
-                            workspace_skill_catalog
-                                .as_ref()
-                                .expect("workspace catalog exists")
-                                .clone(),
-                        )
-                    })
-                    .map(|mut presentation| {
-                        presentation.set_outcome(
-                            completion_outcome(status.clone(), exit_code),
-                            aggregated_output.as_deref(),
-                        );
-                        presentation
-                    });
-                if let Some(cwd) = workspace_skill_read
-                    .as_ref()
-                    .and_then(WorkspaceSkillReadPresentation::begin_catalog_refresh_if_needed)
-                    && let Some(required_skill_cwds) = required_skill_cwds.as_deref_mut()
-                {
-                    required_skill_cwds.push(cwd);
-                }
-                let lines = command_execution_fallback_lines(
-                    &command,
-                    status,
-                    aggregated_output.as_deref(),
-                    exit_code,
-                );
-                cells.push(Arc::new(WorkspaceCommandHistoryCell {
-                    lines,
-                    workspace_skill_read,
-                }));
             }
             other => {
                 if let Some(cell) = fallback_transcript_cell(&other) {
@@ -470,7 +321,3 @@ fn command_execution_fallback_lines(
     }
     lines
 }
-
-#[cfg(test)]
-#[path = "thread_transcript_tests.rs"]
-mod tests;

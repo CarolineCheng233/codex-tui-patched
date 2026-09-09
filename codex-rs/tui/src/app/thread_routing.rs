@@ -8,7 +8,6 @@ use super::session_lifecycle::ThreadAttachPresentation;
 use super::*;
 use crate::app_event::ThreadTitleDestination;
 use crate::chatwidget::ThreadInputStateRestoreMode;
-use crate::workspace_skill_output::WorkspaceSkillRefreshTicket;
 use codex_app_server_protocol::ThreadStartedNotification;
 use codex_app_server_protocol::TurnInterruptParams;
 use codex_app_server_protocol::TurnInterruptResponse;
@@ -832,25 +831,13 @@ impl App {
                 Ok(true)
             }
             AppCommand::ListSkills { cwds, force_reload } => {
-                let ticket = self.chat_widget.workspace_skill_catalog_ticket(cwds);
                 let result = app_server
                     .skills_list(codex_app_server_protocol::SkillsListParams {
                         cwds: cwds.clone(),
                         force_reload: *force_reload,
                     })
                     .await;
-                if ticket.is_empty() {
-                    if result.is_err() {
-                        self.chat_widget.mark_workspace_skill_catalog_failed(cwds);
-                    }
-                    self.handle_skills_list_result(result, "failed to refresh skills");
-                } else {
-                    self.handle_skills_list_result_if_current(
-                        result,
-                        "failed to refresh skills",
-                        &ticket,
-                    );
-                }
+                self.handle_skills_list_result(result, "failed to refresh skills");
                 Ok(true)
             }
             AppCommand::Compact => {
@@ -943,32 +930,6 @@ impl App {
                 self.chat_widget
                     .add_error_message(format!("{failure_message}: {err:#}"));
             }
-        }
-    }
-
-    pub(super) fn handle_skills_list_result_if_current(
-        &mut self,
-        result: Result<SkillsListResponse>,
-        failure_message: &str,
-        ticket: &[WorkspaceSkillRefreshTicket],
-    ) {
-        match result {
-            Ok(response) => {
-                if self.handle_skills_list_response_if_current(response, ticket) {
-                    self.invalidate_workspace_skill_catalog_view();
-                }
-            }
-            Err(err)
-                if self
-                    .chat_widget
-                    .mark_workspace_skill_catalog_failed_if_current(ticket) =>
-            {
-                tracing::warn!("{failure_message}: {err:#}");
-                self.chat_widget
-                    .add_error_message(format!("{failure_message}: {err:#}"));
-                self.invalidate_workspace_skill_catalog_view();
-            }
-            Err(_) => {}
         }
     }
 
@@ -1810,21 +1771,6 @@ impl App {
     pub(super) fn handle_skills_list_response(&mut self, response: SkillsListResponse) {
         self.handle_skills_list_warnings(&response);
         self.chat_widget.handle_skills_list_response(response);
-    }
-
-    pub(super) fn handle_skills_list_response_if_current(
-        &mut self,
-        response: SkillsListResponse,
-        ticket: &[WorkspaceSkillRefreshTicket],
-    ) -> bool {
-        if !self
-            .chat_widget
-            .handle_skills_list_response_if_current(&response, ticket)
-        {
-            return false;
-        }
-        self.handle_skills_list_warnings(&response);
-        true
     }
 
     fn handle_skills_list_warnings(&mut self, response: &SkillsListResponse) {

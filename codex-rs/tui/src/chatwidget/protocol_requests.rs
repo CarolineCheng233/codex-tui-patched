@@ -65,20 +65,6 @@ impl ChatWidget {
         self.on_list_skills(response);
     }
 
-    pub(crate) fn handle_skills_list_response_if_current(
-        &mut self,
-        response: &SkillsListResponse,
-        ticket: &[crate::workspace_skill_output::WorkspaceSkillRefreshTicket],
-    ) -> bool {
-        if !self.set_skills_from_current_ticket(response, ticket) {
-            return false;
-        }
-        self.refresh_plugin_mentions();
-        self.bump_active_cell_revision();
-        self.request_redraw();
-        true
-    }
-
     pub(super) fn on_patch_apply_output_delta(&mut self, _item_id: String, _delta: String) {}
 
     pub(super) fn on_guardian_review_notification(

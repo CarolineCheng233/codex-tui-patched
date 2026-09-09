@@ -250,13 +250,9 @@ pub(crate) trait HistoryCell: std::fmt::Debug + Send + Sync + Any {
         plain_hyperlink_lines(self.transcript_lines(width))
     }
 
-    /// Returns the transcript representation used by the interactive workspace.
-    ///
-    /// Most cells use the complete transcript, but individual cell types can
-    /// opt into a compact workspace-only representation without changing the
-    /// normal transcript or the main chat history.
+    /// Returns the normal chat representation used by the interactive workspace.
     fn workspace_transcript_hyperlink_lines(&self, width: u16) -> Vec<HyperlinkLine> {
-        self.transcript_hyperlink_lines(width)
+        self.display_hyperlink_lines(width)
     }
 
     /// Returns the number of viewport rows for the transcript overlay.

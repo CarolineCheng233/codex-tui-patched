@@ -458,17 +458,6 @@ mod tests {
     }
 
     #[test]
-    fn workspace_skill_zsh_pwd_then_sed_stays_unknown() {
-        let inner = "pwd && sed -n '1,240p' /tmp/enabled-skill/SKILL.md";
-        assert_parsed(
-            &vec_str(&["zsh", "-lc", inner]),
-            vec![ParsedCommand::Unknown {
-                cmd: inner.to_string(),
-            }],
-        );
-    }
-
-    #[test]
     fn supports_ls_with_pipe() {
         let inner = "ls -la | sed -n '1,120p'";
         assert_parsed(

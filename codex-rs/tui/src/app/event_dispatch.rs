@@ -1240,19 +1240,12 @@ impl App {
             AppEvent::SkillsListLoaded {
                 cwd,
                 result,
-                ticket,
             } => {
                 let result = result.map_err(|err| color_eyre::eyre::eyre!(err));
-                if ticket.is_empty() && cwds_differ(&cwd, self.config.cwd.as_path()) {
+                if cwds_differ(&cwd, self.config.cwd.as_path()) {
                     self.skill_load_warnings.startup_complete = true;
-                } else if ticket.is_empty() {
-                    self.handle_skills_list_result(result, "failed to load skills on startup");
                 } else {
-                    self.handle_skills_list_result_if_current(
-                        result,
-                        "failed to load skills on startup",
-                        &ticket,
-                    );
+                    self.handle_skills_list_result(result, "failed to load skills on startup");
                 }
                 self.skill_load_warnings.startup_complete = true;
             }
@@ -2805,7 +2798,6 @@ impl App {
                 {
                     Ok(()) => {
                         self.chat_widget.update_skill_enabled(path, enabled);
-                        self.invalidate_workspace_skill_catalog_view();
                     }
                     Err(err) => {
                         let path_display = path.display();

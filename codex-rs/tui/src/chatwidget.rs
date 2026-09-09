@@ -78,8 +78,6 @@ use crate::text_formatting::proper_join;
 use crate::token_usage::TokenUsage;
 use crate::token_usage::TokenUsageInfo;
 use crate::version::CODEX_CLI_VERSION;
-use crate::workspace_skill_output::WorkspaceSkillCatalog;
-use crate::workspace_skill_output::WorkspaceSkillRefreshTicket;
 use codex_app_server_protocol::AddCreditsNudgeCreditType;
 use codex_app_server_protocol::AddCreditsNudgeEmailStatus;
 use codex_app_server_protocol::AppSummary;
@@ -629,7 +627,6 @@ pub(crate) struct ChatWidget {
     suppressed_exec_calls: HashSet<String>,
     skills_all: Vec<SkillMetadata>,
     skills_initial_state: Option<HashMap<AbsolutePathBuf, bool>>,
-    workspace_skill_catalog: Arc<WorkspaceSkillCatalog>,
     last_unified_wait: Option<UnifiedExecWaitState>,
     unified_exec_wait_streak: Option<UnifiedExecWaitStreak>,
     turn_lifecycle: TurnLifecycleState,
@@ -1769,14 +1766,10 @@ impl ChatWidget {
     }
 
     fn refresh_skills_for_current_cwd(&mut self, force_reload: bool) {
-        let mut cwds = if force_reload { self.workspace_skill_catalog.invalidate_all() } else { Default::default() };
-        if !cwds
-            .iter()
-            .any(|cwd| cwd.as_path() == self.config.cwd.as_path())
-        {
-            cwds.push(self.config.cwd.to_path_buf());
-        }
-        self.submit_op(AppCommand::list_skills(cwds, force_reload));
+        self.submit_op(AppCommand::list_skills(
+            vec![self.config.cwd.to_path_buf()],
+            force_reload,
+        ));
     }
 
     /// Forward a command directly to codex.
@@ -1998,52 +1991,6 @@ impl ChatWidget {
     /// runtime overrides applied via TUI, e.g., model or approval policy).
     pub(crate) fn config_ref(&self) -> &Config {
         &self.config
-    }
-
-    pub(crate) fn workspace_skill_catalog(&self) -> Arc<WorkspaceSkillCatalog> {
-        self.workspace_skill_catalog.clone()
-    }
-
-    pub(crate) fn mark_workspace_skill_catalog_failed(&self, cwds: &[PathBuf]) {
-        self.workspace_skill_catalog.mark_failed_for_cwds(cwds);
-    }
-
-    pub(crate) fn mark_workspace_skill_catalog_failed_if_current(
-        &mut self,
-        ticket: &[WorkspaceSkillRefreshTicket],
-    ) -> bool {
-        if !self.workspace_skill_catalog.mark_failed_if_current(ticket) {
-            return false;
-        }
-        self.bump_active_cell_revision();
-        self.request_redraw();
-        true
-    }
-
-    pub(crate) fn workspace_skill_catalog_ticket(
-        &self,
-        cwds: &[PathBuf],
-    ) -> Vec<WorkspaceSkillRefreshTicket> {
-        cwds.iter()
-            .filter_map(|cwd| {
-                let cwd = codex_utils_path_uri::PathUri::from_host_native_path(cwd).ok()?;
-                self.workspace_skill_catalog.current_ticket(&cwd)
-            })
-            .collect()
-    }
-
-    pub(crate) fn begin_workspace_skill_catalog_refresh(
-        &self,
-        cwds: &[PathBuf],
-    ) -> Vec<WorkspaceSkillRefreshTicket> {
-        cwds.iter()
-            .filter_map(|cwd| {
-                let cwd = codex_utils_path_uri::PathUri::from_host_native_path(cwd).ok()?;
-                self.workspace_skill_catalog
-                    .begin_refresh_if_unrequested(&cwd);
-                self.workspace_skill_catalog.current_ticket(&cwd)
-            })
-            .collect()
     }
 
     #[cfg(test)]

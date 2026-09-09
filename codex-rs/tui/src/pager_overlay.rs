@@ -660,19 +660,6 @@ impl TranscriptOverlay {
         self.view.render(area, buf);
     }
 
-    /// Rebuild the Workspace-only projection after external cell state changes.
-    ///
-    /// Candidate cells resolve their compact form from the shared skill catalog, so their visible
-    /// height can change without replacing the underlying history cell. Keep the viewport offset
-    /// and selected turn intact while discarding both the renderable and layout caches.
-    pub(crate) fn invalidate_workspace_catalog_view(&mut self) {
-        if !self.is_workspace() {
-            return;
-        }
-        let live_tail = self.take_live_tail_renderable();
-        self.rebuild_renderables(live_tail);
-    }
-
     fn invalidate_workspace_layout(&mut self) {
         if self.is_workspace() {
             self.workspace_layout_index = None;
