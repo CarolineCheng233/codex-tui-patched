@@ -675,6 +675,10 @@ impl TranscriptOverlay {
         true
     }
 
+    fn retains_workspace_state(&self) -> bool {
+        self.is_workspace() || self.workspace_detail_return_scroll_offset.is_some()
+    }
+
     pub(crate) fn set_local_image_previews_enabled(&mut self, enabled: bool) {
         if self.local_image_previews_enabled == enabled {
             return;
@@ -1144,7 +1148,7 @@ impl TranscriptOverlay {
             .rposition(|cell| cell.as_any().is::<SessionInfoCell>())
             .map_or(/*default*/ 0, |index| index.saturating_add(/*rhs*/ 1));
         self.cells.splice(insert_at..insert_at, cells);
-        if self.is_workspace() {
+        if self.retains_workspace_state() {
             self.workspace_turns
                 .shift_indices_from(insert_at, added_cells);
             self.workspace_turns.refresh_after_append(&self.cells);
@@ -1181,7 +1185,7 @@ impl TranscriptOverlay {
         let follow_bottom = self.view.is_scrolled_to_bottom();
         let live_tail = self.take_live_tail_renderable();
         self.cells = cells;
-        if self.is_workspace() {
+        if self.retains_workspace_state() {
             self.workspace_turns.reset(&self.cells);
             self.workspace_target_mode = WorkspaceTargetMode::FollowViewport;
         }
@@ -1228,7 +1232,7 @@ impl TranscriptOverlay {
             }
             self.cells
                 .splice(clamped_start..clamped_end, std::iter::once(consolidated));
-            if self.is_workspace() {
+            if self.retains_workspace_state() {
                 self.workspace_turns.reset(&self.cells);
                 self.workspace_target_mode = WorkspaceTargetMode::FollowViewport;
             }

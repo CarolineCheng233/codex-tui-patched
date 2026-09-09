@@ -141,6 +141,43 @@ fn turn_state_folds_one_user_turn_and_preserves_its_selection() {
 }
 
 #[test]
+fn workspace_details_prepend_keeps_the_folded_turn() {
+    let cells = vec![
+        Arc::new(UserHistoryCell {
+            message: "first prompt".into(),
+            text_elements: Vec::new(),
+            local_image_paths: Vec::new(),
+            remote_image_urls: Vec::new(),
+        }) as Arc<dyn crate::history_cell::HistoryCell>,
+        Arc::new(PlainHistoryCell::new(vec![Line::from("first reply")]))
+            as Arc<dyn crate::history_cell::HistoryCell>,
+        Arc::new(UserHistoryCell {
+            message: "second prompt".into(),
+            text_elements: Vec::new(),
+            local_image_paths: Vec::new(),
+            remote_image_urls: Vec::new(),
+        }) as Arc<dyn crate::history_cell::HistoryCell>,
+        Arc::new(PlainHistoryCell::new(vec![Line::from("second reply")]))
+            as Arc<dyn crate::history_cell::HistoryCell>,
+    ];
+    let mut overlay =
+        TranscriptOverlay::new_workspace(cells, crate::keymap::RuntimeKeymap::defaults().pager);
+    assert!(overlay.workspace_turns.collapse_selected(&overlay.cells));
+    assert!(overlay.open_workspace_details());
+
+    overlay.prepend(
+        vec![Arc::new(PlainHistoryCell::new(vec![Line::from(
+            "older history",
+        )]))],
+        /*width*/ 80,
+    );
+
+    assert!(overlay.return_to_workspace());
+    assert!(overlay.workspace_turns.is_collapsed(/*turn_start*/ 3));
+    assert!(overlay.workspace_turns.is_cell_hidden(/*cell_index*/ 4));
+}
+
+#[test]
 fn workspace_bottom_append_selects_the_new_user_turn() {
     let cells = vec![
         Arc::new(UserHistoryCell {
