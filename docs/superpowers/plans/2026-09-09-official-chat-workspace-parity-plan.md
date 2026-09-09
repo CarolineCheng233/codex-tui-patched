@@ -457,7 +457,7 @@ just test -p codex-tui -E 'test(~workspace_input_space_reaches_composer)'
 | 范围 | 状态 | 当前证据 | 仍需完成 |
 | --- | --- | --- | --- |
 | 默认 Workspace 正常展示与旧 skill 状态机移除 | 已完成代码/专项测试 | `73dc9e30b7`；Read 正常展示 RED→GREEN，相关正常展示测试 4/4 | 用真实包与官方同事件截图作运行态对照 |
-| 空格、Shift+Space 与弹窗优先级 | 已完成代码/专项测试 | `737d74165e`、`a89c85f783`、`d6faeeb3d1`；空格 RED→GREEN，弹窗 PageDown 选择回归通过 | 输入法组合态、Ctrl+B/F/Home/End 的真实终端矩阵 |
+| 空格、Shift+Space、编辑键与弹窗优先级 | 已完成代码/专项测试 | `737d74165e`、`a89c85f783`、`d6faeeb3d1`、`19fa1a38c6`；空格 RED→GREEN，弹窗 PageDown 选择，以及 Home/End、Ctrl+B/F 的 Composer 编辑回归通过 | 输入法组合态、中文粘贴与全部编辑键的真实终端矩阵 |
 | 持久化 CommandExecution | 已完成代码/专项测试 | `e593e0d5c6`、`1918691b75`、`bc6245b979`；默认摘要、完整正文、真实状态/可选 exit/耗时测试通过，通用 fallback 边界受回归保护 | 一次载入与拆页载入的完整对照 |
 | 持久化 WebSearch | 已完成代码/专项测试 | `9b6b59dd16`；plain fallback RED→官方 WebSearchCell GREEN | 运行中 WebSearch、resume 和真实分页入口对照 |
 | 详情往返、锚点、线程隔离与备用屏 | 已完成代码/专项测试 | `0a6d98e589`、`c3ee81391d`、`a583be1a9a`、`06dfcee580`、`ddab83bea0`；草稿、q 返回、prepend/append、跟随底部、缩放、锚点删除、新线程切换，以及“返回不退出备用屏、最终关闭才退出”的 App 入口回归通过 | 原始 PTY 控制序列捕获、图片和真实 iTerm2 视觉验收 |
@@ -465,12 +465,14 @@ just test -p codex-tui -E 'test(~workspace_input_space_reaches_composer)'
 | 本地包 | 已完成构建完整性核验 | 功能代码 `06dfcee580`（构建时 HEAD `3848ea7f69`）；`./scripts/build-patched-tui.sh` 退出码 0，release/package SHA-256 均为 `a2e10f…e97db73`，生成时间 `2026-09-09T18:48:33Z`；系统 Codex SHA-256 保持 `b973d4…1261e3` | 新 TUI 进程的实际交互与 iTerm2 图片显示证据 |
 | 全量 TUI | 未通过，未归因 | 4315 通过、25 失败、1 超时；失败以网络 mock/异步超时、custom-terminal pending snapshot 为主 | 在本轮之前基线或独立环境复验，逐项归因；不能宣称无关 |
 
-本次实现提交顺序：`737d74165e`、`73dc9e30b7`、`e593e0d5c6`、`9b6b59dd16`、`0a6d98e589`、`a89c85f783`、`a583be1a9a`、`d6faeeb3d1`、`c3ee81391d`、`1918691b75`、`bc6245b979`、`06dfcee580`。未跟踪的 custom-terminal `.snap.new` 和旧方案文件不属于本任务，保持原样且未提交。
+本次实现提交顺序：`737d74165e`、`73dc9e30b7`、`e593e0d5c6`、`9b6b59dd16`、`0a6d98e589`、`a89c85f783`、`a583be1a9a`、`d6faeeb3d1`、`c3ee81391d`、`1918691b75`、`bc6245b979`、`06dfcee580`、`ddab83bea0`、`19fa1a38c6`。未跟踪的 custom-terminal `.snap.new` 和旧方案文件不属于本任务，保持原样且未提交。
 
 `06dfcee580` 的 TDD 记录：`workspace_details_resize_restore_keeps_the_same_top_cell` 在实现前两次均为 `left: 3, right: 15`；`workspace_parity_details_thread_change_clears_old_overlay` 在实现前两次均因旧 overlay 未清除失败。最小实现后，新增缩放、删除锚点、详情期间追加/跟随底部与线程切换测试共同进入上述 17 项专项集。`just fix -p codex-tui` 退出码 0，仅报告既有 `Overlay` 枚举体积警告；`just fmt` 退出码 0。`cargo insta pending-snapshots` 仅列出已存在的两个 custom-terminal `.snap.new`，未接受或修改。
 
 当前本地包构建于 `2026-09-09T10:34:49Z` 之后，`./scripts/build-patched-tui.sh` 在 13 分 33 秒后明确成功。`codex-rs/target/codex-tui-package/bin/codex --version` 可执行并输出 `codex-cli 0.0.0`；该版本字符串不用于判断新旧，判定依据为上表 package/release 相等的 SHA-256。构建期间仅出现 app-server/cloud-tasks 未使用项、链接器 compact-unwind 和依赖未来兼容性警告，均未阻止生成。
 
 `ddab83bea0` 的 `workspace_parity_details_terminal_lifecycle` 为基线保护：实现已具备该行为，因此首次执行即通过（1 通过、4363 跳过、退出码 0），不伪造 RED。它验证 TUI 的备用屏状态，不替代尚未取得的真实 PTY 控制序列或 iTerm2 图片证据。
+
+`19fa1a38c6` 的 Home/End、Ctrl+B/F 用例也均为基线保护：分别以 `Xabc`→`XabcY` 和 `abXc`→`abXcY` 验证 Composer 光标移动与插入，两个精确过滤命令各为 1 通过、退出码 0。它们不替代输入法组合态与真实终端按键验收。
 
 2026-09-09 GUI 证据：iTerm2 已运行，但 Computer Use 对 bundle ID `com.googlecode.iterm2` 明确返回策略拒绝。按 7.4 节红线停止 GUI 自动操作，未使用替代注入方式；该限制不影响已完成的自动化与包完整性证据，但 iTerm2 图片/真实按键视觉验收仍需用户手动完成。
