@@ -462,11 +462,13 @@ just test -p codex-tui -E 'test(~workspace_input_space_reaches_composer)'
 | 持久化 WebSearch | 已完成代码/专项测试 | `9b6b59dd16`；plain fallback RED→官方 WebSearchCell GREEN | 运行中 WebSearch、resume 和真实分页入口对照 |
 | 详情往返、锚点与线程隔离 | 已完成代码/专项测试 | `0a6d98e589`、`c3ee81391d`、`a583be1a9a`、`06dfcee580`；草稿、q 返回、prepend/append、跟随底部、缩放、锚点删除和新线程切换回归通过 | PTY 终端生命周期、图片和真实 iTerm2 视觉验收 |
 | Workspace 专项集 | 已通过 | `just test -p codex-tui -E 'test(~workspace_parity_) | test(~workspace_input_) | test(~workspace_details_)'`：17 通过、4346 跳过、退出码 0 | 输入法组合态、完整编辑键矩阵和真实终端输入 |
-| 本地包 | 需按当前代码重新构建 | 上一包对应代码 HEAD `bc6245b979`；release/package SHA-256 均为 `50eb57…a5745`，系统 Codex SHA-256 保持 `b973d4…1261e3` | 为 `06dfcee580` 构建新包，并验证包内二进制哈希与新进程路径 |
+| 本地包 | 已完成构建完整性核验 | 功能代码 `06dfcee580`（构建时 HEAD `3848ea7f69`）；`./scripts/build-patched-tui.sh` 退出码 0，release/package SHA-256 均为 `a2e10f…e97db73`，生成时间 `2026-09-09T18:48:33Z`；系统 Codex SHA-256 保持 `b973d4…1261e3` | 新 TUI 进程的实际交互与 iTerm2 图片显示证据 |
 | 全量 TUI | 未通过，未归因 | 4315 通过、25 失败、1 超时；失败以网络 mock/异步超时、custom-terminal pending snapshot 为主 | 在本轮之前基线或独立环境复验，逐项归因；不能宣称无关 |
 
 本次实现提交顺序：`737d74165e`、`73dc9e30b7`、`e593e0d5c6`、`9b6b59dd16`、`0a6d98e589`、`a89c85f783`、`a583be1a9a`、`d6faeeb3d1`、`c3ee81391d`、`1918691b75`、`bc6245b979`、`06dfcee580`。未跟踪的 custom-terminal `.snap.new` 和旧方案文件不属于本任务，保持原样且未提交。
 
 `06dfcee580` 的 TDD 记录：`workspace_details_resize_restore_keeps_the_same_top_cell` 在实现前两次均为 `left: 3, right: 15`；`workspace_parity_details_thread_change_clears_old_overlay` 在实现前两次均因旧 overlay 未清除失败。最小实现后，新增缩放、删除锚点、详情期间追加/跟随底部与线程切换测试共同进入上述 17 项专项集。`just fix -p codex-tui` 退出码 0，仅报告既有 `Overlay` 枚举体积警告；`just fmt` 退出码 0。`cargo insta pending-snapshots` 仅列出已存在的两个 custom-terminal `.snap.new`，未接受或修改。
+
+当前本地包构建于 `2026-09-09T10:34:49Z` 之后，`./scripts/build-patched-tui.sh` 在 13 分 33 秒后明确成功。`codex-rs/target/codex-tui-package/bin/codex --version` 可执行并输出 `codex-cli 0.0.0`；该版本字符串不用于判断新旧，判定依据为上表 package/release 相等的 SHA-256。构建期间仅出现 app-server/cloud-tasks 未使用项、链接器 compact-unwind 和依赖未来兼容性警告，均未阻止生成。
 
 2026-09-09 GUI 证据：iTerm2 已运行，但 Computer Use 对 bundle ID `com.googlecode.iterm2` 明确返回策略拒绝。按 7.4 节红线停止 GUI 自动操作，未使用替代注入方式；该限制不影响已完成的自动化与包完整性证据，但 iTerm2 图片/真实按键视觉验收仍需用户手动完成。
