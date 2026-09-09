@@ -1,6 +1,6 @@
 # 官方聊天展示与固定输入框 Workspace 修订方案
 
-> 状态：实施中。默认 Workspace、持久化 CommandExecution/WebSearch、详情往返和输入路由已完成代码与专项自动化；真实 iTerm2 GUI、完整跨入口历史矩阵和性能采样尚未完成，因此本文不代表全部验收通过。
+> 状态：实施中。默认 Workspace、持久化 CommandExecution/WebSearch、详情往返/锚点恢复和输入路由已完成代码与专项自动化；真实 iTerm2 GUI、PTY 终端生命周期、完整跨入口历史矩阵和性能采样尚未完成，因此本文不代表全部验收通过。
 >
 > 执行方式：使用 superpowers:executing-plans 按任务串行执行；未经用户明确授权不启动子代理、不创建或切换分支。
 >
@@ -460,10 +460,13 @@ just test -p codex-tui -E 'test(~workspace_input_space_reaches_composer)'
 | 空格、Shift+Space 与弹窗优先级 | 已完成代码/专项测试 | `737d74165e`、`a89c85f783`、`d6faeeb3d1`；空格 RED→GREEN，弹窗 PageDown 选择回归通过 | 输入法组合态、Ctrl+B/F/Home/End 的真实终端矩阵 |
 | 持久化 CommandExecution | 已完成代码/专项测试 | `e593e0d5c6`、`1918691b75`、`bc6245b979`；默认摘要、完整正文、真实状态/可选 exit/耗时测试通过，通用 fallback 边界受回归保护 | 一次载入与拆页载入的完整对照 |
 | 持久化 WebSearch | 已完成代码/专项测试 | `9b6b59dd16`；plain fallback RED→官方 WebSearchCell GREEN | 运行中 WebSearch、resume 和真实分页入口对照 |
-| 详情往返与详情期间 prepend | 已完成代码/专项测试 | `0a6d98e589`、`c3ee81391d`、`a583be1a9a`；草稿、q 返回、旧页和折叠索引回归通过 | 图片、resize、thread/fork、删除锚点和跟随底部矩阵 |
-| 本地包 | 已完成构建完整性核验 | 代码 HEAD `bc6245b979`；release/package SHA-256 均为 `50eb57…a5745`，系统 Codex SHA-256 保持 `b973d4…1261e3` | 新 TUI 进程的实际交互与 iTerm2 图片显示证据 |
+| 详情往返、锚点与线程隔离 | 已完成代码/专项测试 | `0a6d98e589`、`c3ee81391d`、`a583be1a9a`、`06dfcee580`；草稿、q 返回、prepend/append、跟随底部、缩放、锚点删除和新线程切换回归通过 | PTY 终端生命周期、图片和真实 iTerm2 视觉验收 |
+| Workspace 专项集 | 已通过 | `just test -p codex-tui -E 'test(~workspace_parity_) | test(~workspace_input_) | test(~workspace_details_)'`：17 通过、4346 跳过、退出码 0 | 输入法组合态、完整编辑键矩阵和真实终端输入 |
+| 本地包 | 需按当前代码重新构建 | 上一包对应代码 HEAD `bc6245b979`；release/package SHA-256 均为 `50eb57…a5745`，系统 Codex SHA-256 保持 `b973d4…1261e3` | 为 `06dfcee580` 构建新包，并验证包内二进制哈希与新进程路径 |
 | 全量 TUI | 未通过，未归因 | 4315 通过、25 失败、1 超时；失败以网络 mock/异步超时、custom-terminal pending snapshot 为主 | 在本轮之前基线或独立环境复验，逐项归因；不能宣称无关 |
 
-本次实现提交顺序：`737d74165e`、`73dc9e30b7`、`e593e0d5c6`、`9b6b59dd16`、`0a6d98e589`、`a89c85f783`、`a583be1a9a`、`d6faeeb3d1`、`c3ee81391d`、`1918691b75`、`bc6245b979`。未跟踪的 custom-terminal `.snap.new` 和旧方案文件不属于本任务，保持原样且未提交。
+本次实现提交顺序：`737d74165e`、`73dc9e30b7`、`e593e0d5c6`、`9b6b59dd16`、`0a6d98e589`、`a89c85f783`、`a583be1a9a`、`d6faeeb3d1`、`c3ee81391d`、`1918691b75`、`bc6245b979`、`06dfcee580`。未跟踪的 custom-terminal `.snap.new` 和旧方案文件不属于本任务，保持原样且未提交。
+
+`06dfcee580` 的 TDD 记录：`workspace_details_resize_restore_keeps_the_same_top_cell` 在实现前两次均为 `left: 3, right: 15`；`workspace_parity_details_thread_change_clears_old_overlay` 在实现前两次均因旧 overlay 未清除失败。最小实现后，新增缩放、删除锚点、详情期间追加/跟随底部与线程切换测试共同进入上述 17 项专项集。`just fix -p codex-tui` 退出码 0，仅报告既有 `Overlay` 枚举体积警告；`just fmt` 退出码 0。`cargo insta pending-snapshots` 仅列出已存在的两个 custom-terminal `.snap.new`，未接受或修改。
 
 2026-09-09 GUI 证据：iTerm2 已运行，但 Computer Use 对 bundle ID `com.googlecode.iterm2` 明确返回策略拒绝。按 7.4 节红线停止 GUI 自动操作，未使用替代注入方式；该限制不影响已完成的自动化与包完整性证据，但 iTerm2 图片/真实按键视觉验收仍需用户手动完成。
