@@ -5,6 +5,8 @@ use codex_app_server_protocol::CommandAction;
 use codex_app_server_protocol::CommandExecutionSource;
 use codex_app_server_protocol::CommandExecutionStatus;
 use codex_app_server_protocol::ThreadItem;
+use codex_app_server_protocol::WebSearchAction;
+use codex_app_server_protocol::WebSearchItem;
 use pretty_assertions::assert_eq;
 
 fn joined_workspace_lines(cell: &dyn HistoryCell) -> String {
@@ -98,4 +100,25 @@ fn workspace_parity_persisted_detail_preserves_optional_completion_fields() {
     assert!(detail.contains("status: Completed · 1.25s"));
     assert!(!detail.contains("exit 0"));
     assert!(detail.contains("PERSISTED_DETAIL_BODY_SENTINEL"));
+}
+
+#[test]
+fn workspace_parity_persisted_web_search_uses_normal_display() {
+    let cwd = test_path_buf("/tmp/workspace-persisted-search").abs();
+    let item = ThreadItem::WebSearch(WebSearchItem {
+        id: "persisted-search".to_string(),
+        query: "Codex TUI".to_string(),
+        action: Some(WebSearchAction::Search {
+            query: Some("Codex TUI".to_string()),
+            queries: None,
+        }),
+        results: None,
+    });
+
+    let cells =
+        thread_items_to_transcript_cells(None, &cwd, [item], RawReasoningVisibility::Hidden, None);
+
+    let workspace = joined_workspace_lines(cells[0].as_ref());
+    assert_eq!(workspace, "• Searched the web for Codex TUI");
+    insta::assert_snapshot!(workspace, @"• Searched the web for Codex TUI");
 }

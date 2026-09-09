@@ -215,6 +215,14 @@ pub(crate) fn thread_items_to_transcript_cells(
                     duration,
                 )));
             }
+            ThreadItem::WebSearch(item) => {
+                cells.push(Arc::new(crate::history_cell::new_web_search_call(
+                    item.id,
+                    item.query,
+                    item.action
+                        .unwrap_or(codex_app_server_protocol::WebSearchAction::Other),
+                )));
+            }
             other => {
                 if let Some(cell) = fallback_transcript_cell(&other) {
                     cells.push(Arc::new(cell));
