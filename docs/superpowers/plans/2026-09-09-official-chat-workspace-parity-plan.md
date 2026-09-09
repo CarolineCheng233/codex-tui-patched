@@ -458,10 +458,10 @@ just test -p codex-tui -E 'test(~workspace_input_space_reaches_composer)'
 | --- | --- | --- | --- |
 | 默认 Workspace 正常展示与旧 skill 状态机移除 | 已完成代码/专项测试 | `73dc9e30b7`；Read 正常展示 RED→GREEN，相关正常展示测试 4/4 | 用真实包与官方同事件截图作运行态对照 |
 | 空格、Shift+Space 与弹窗优先级 | 已完成代码/专项测试 | `737d74165e`、`a89c85f783`、`d6faeeb3d1`；空格 RED→GREEN，弹窗 PageDown 选择回归通过 | 输入法组合态、Ctrl+B/F/Home/End 的真实终端矩阵 |
-| 持久化 CommandExecution | 已完成代码/专项测试 | `e593e0d5c6`、`1918691b75`；默认摘要、完整正文、真实状态/可选 exit/耗时测试通过 | 真实 App 分页响应、一次载入与拆页载入的完整对照 |
+| 持久化 CommandExecution | 已完成代码/专项测试 | `e593e0d5c6`、`1918691b75`、`bc6245b979`；默认摘要、完整正文、真实状态/可选 exit/耗时测试通过，通用 fallback 边界受回归保护 | 一次载入与拆页载入的完整对照 |
 | 持久化 WebSearch | 已完成代码/专项测试 | `9b6b59dd16`；plain fallback RED→官方 WebSearchCell GREEN | 运行中 WebSearch、resume 和真实分页入口对照 |
 | 详情往返与详情期间 prepend | 已完成代码/专项测试 | `0a6d98e589`、`c3ee81391d`、`a583be1a9a`；草稿、q 返回、旧页和折叠索引回归通过 | 图片、resize、thread/fork、删除锚点和跟随底部矩阵 |
-| 本地包 | 已完成构建完整性核验 | 当前 HEAD `1918691b75`；release/package SHA-256 均为 `79a3ce…b8f70`，系统 Codex SHA-256 保持 `b973d4…1261e3` | 新 TUI 进程的实际交互与 iTerm2 图片显示证据 |
+| 本地包 | 已完成构建完整性核验 | 代码 HEAD `bc6245b979`；release/package SHA-256 均为 `50eb57…a5745`，系统 Codex SHA-256 保持 `b973d4…1261e3` | 新 TUI 进程的实际交互与 iTerm2 图片显示证据 |
 | 全量 TUI | 未通过，未归因 | 4315 通过、25 失败、1 超时；失败以网络 mock/异步超时、custom-terminal pending snapshot 为主 | 在本轮之前基线或独立环境复验，逐项归因；不能宣称无关 |
 
-本次实现提交顺序：`737d74165e`、`73dc9e30b7`、`e593e0d5c6`、`9b6b59dd16`、`0a6d98e589`、`a89c85f783`、`a583be1a9a`、`d6faeeb3d1`、`c3ee81391d`、`1918691b75`。未跟踪的 custom-terminal `.snap.new` 和旧方案文件不属于本任务，保持原样且未提交。
+本次实现提交顺序：`737d74165e`、`73dc9e30b7`、`e593e0d5c6`、`9b6b59dd16`、`0a6d98e589`、`a89c85f783`、`a583be1a9a`、`d6faeeb3d1`、`c3ee81391d`、`1918691b75`、`bc6245b979`。未跟踪的 custom-terminal `.snap.new` 和旧方案文件不属于本任务，保持原样且未提交。
