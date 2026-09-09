@@ -87,6 +87,18 @@ pub(crate) struct PersistedCommandCompletion {
     pub(crate) duration: Option<Duration>,
 }
 
+#[derive(Debug)]
+pub(crate) struct PersistedCommandExecution {
+    pub(crate) call_id: String,
+    pub(crate) command: Vec<String>,
+    pub(crate) parsed: Vec<ParsedCommand>,
+    pub(crate) source: ExecCommandSource,
+    pub(crate) status: CommandExecutionStatus,
+    pub(crate) exit_code: Option<i32>,
+    pub(crate) aggregated_output: String,
+    pub(crate) duration: Option<Duration>,
+}
+
 impl ExecCell {
     pub(crate) fn new(call: ExecCall, animations_enabled: bool) -> Self {
         Self {
@@ -96,16 +108,17 @@ impl ExecCell {
         }
     }
 
-    pub(crate) fn from_persisted_command(
-        call_id: String,
-        command: Vec<String>,
-        parsed: Vec<ParsedCommand>,
-        source: ExecCommandSource,
-        status: CommandExecutionStatus,
-        exit_code: Option<i32>,
-        aggregated_output: String,
-        duration: Option<Duration>,
-    ) -> Self {
+    pub(crate) fn from_persisted_command(command: PersistedCommandExecution) -> Self {
+        let PersistedCommandExecution {
+            call_id,
+            command,
+            parsed,
+            source,
+            status,
+            exit_code,
+            aggregated_output,
+            duration,
+        } = command;
         let display_exit_code = if status == CommandExecutionStatus::Completed {
             exit_code.unwrap_or_default()
         } else {

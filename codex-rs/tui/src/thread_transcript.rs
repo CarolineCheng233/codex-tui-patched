@@ -6,6 +6,7 @@ use std::time::Duration;
 use crate::app_server_session::AppServerSession;
 use crate::app_server_session::HistoryHydrationScope;
 use crate::exec_cell::ExecCell;
+use crate::exec_cell::PersistedCommandExecution;
 use crate::exec_command::split_command_string;
 use crate::git_action_directives::parse_assistant_markdown;
 use crate::history_cell::AgentMarkdownCell;
@@ -205,14 +206,16 @@ pub(crate) fn thread_items_to_transcript_cells(
                 let duration =
                     duration_ms.map(|duration_ms| Duration::from_millis(duration_ms.max(0) as u64));
                 cells.push(Arc::new(ExecCell::from_persisted_command(
-                    id,
-                    split_command_string(&command),
-                    parsed,
-                    source,
-                    status,
-                    exit_code,
-                    aggregated_output.unwrap_or_default(),
-                    duration,
+                    PersistedCommandExecution {
+                        call_id: id,
+                        command: split_command_string(&command),
+                        parsed,
+                        source,
+                        status,
+                        exit_code,
+                        aggregated_output: aggregated_output.unwrap_or_default(),
+                        duration,
+                    },
                 )));
             }
             ThreadItem::WebSearch(item) => {
