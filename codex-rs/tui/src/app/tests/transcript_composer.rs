@@ -3,6 +3,7 @@
 //! The default-off feature must leave the existing viewer and its draft intact.
 
 use super::*;
+use crate::history_cell::PlainHistoryCell;
 use crate::pager_overlay::TranscriptWorkspaceLayout;
 use crate::render::renderable::Renderable;
 use crossterm::event::KeyCode;
@@ -240,6 +241,101 @@ async fn workspace_input_space_reaches_composer() -> Result<()> {
         .await?;
 
     assert_eq!(app.chat_widget.composer_text_with_pending(), "hello ");
+    app_server.shutdown().await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn workspace_parity_details_roundtrip_preserves_the_draft() -> Result<()> {
+    let (mut app, _app_event_rx, _op_rx) = make_test_app_with_channels().await;
+    app.local_settings.tui.transcript_workspace = true;
+    let mut app_server = start_config_write_test_app_server(&app).await?;
+    let mut tui = crate::tui::test_support::make_test_tui()?;
+    let session = test_thread_session(ThreadId::new(), app.config.cwd.to_path_buf());
+    app.chat_widget.handle_thread_session(session);
+    app.open_transcript_overlay(&mut tui);
+    app.chat_widget
+        .apply_external_edit("preserved draft".into());
+
+    app.handle_tui_event(
+        &mut tui,
+        &mut app_server,
+        TuiEvent::Key(KeyEvent::new(KeyCode::Char('t'), KeyModifiers::CONTROL)),
+    )
+    .await?;
+    assert!(matches!(
+        &app.overlay,
+        Some(Overlay::Transcript(overlay)) if !overlay.is_workspace()
+    ));
+
+    app.handle_tui_event(
+        &mut tui,
+        &mut app_server,
+        TuiEvent::Key(KeyEvent::new(KeyCode::Char('t'), KeyModifiers::CONTROL)),
+    )
+    .await?;
+    assert!(matches!(
+        &app.overlay,
+        Some(Overlay::Transcript(overlay)) if overlay.is_workspace()
+    ));
+    assert_eq!(
+        app.chat_widget.composer_text_with_pending(),
+        "preserved draft"
+    );
+    app_server.shutdown().await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn workspace_parity_details_prepend_sync() -> Result<()> {
+    let (mut app, _app_event_rx, _op_rx) = make_test_app_with_channels().await;
+    app.local_settings.tui.transcript_workspace = true;
+    let mut app_server = start_config_write_test_app_server(&app).await?;
+    let mut tui = crate::tui::test_support::make_test_tui()?;
+    let session = test_thread_session(ThreadId::new(), app.config.cwd.to_path_buf());
+    app.chat_widget.handle_thread_session(session);
+    app.transcript_cells
+        .push(Arc::new(PlainHistoryCell::new(vec![
+            "current history".into(),
+        ])));
+    app.open_transcript_overlay(&mut tui);
+
+    app.handle_tui_event(
+        &mut tui,
+        &mut app_server,
+        TuiEvent::Key(KeyEvent::new(KeyCode::Char('t'), KeyModifiers::CONTROL)),
+    )
+    .await?;
+    let Some(Overlay::Transcript(overlay)) = app.overlay.as_mut() else {
+        panic!("viewer closed")
+    };
+    overlay.prepend(
+        vec![Arc::new(PlainHistoryCell::new(vec![
+            "older history".into(),
+        ]))],
+        /*width*/ 80,
+    );
+
+    app.handle_tui_event(
+        &mut tui,
+        &mut app_server,
+        TuiEvent::Key(KeyEvent::new(KeyCode::Char('t'), KeyModifiers::CONTROL)),
+    )
+    .await?;
+    let area = Rect::new(
+        /*x*/ 0, /*y*/ 0, /*width*/ 80, /*height*/ 10,
+    );
+    let mut buffer = ratatui::buffer::Buffer::empty(area);
+    let Some(Overlay::Transcript(overlay)) = app.overlay.as_mut() else {
+        panic!("workspace closed")
+    };
+    overlay.render_workspace(area, &mut buffer);
+    let rendered = buffer
+        .content()
+        .iter()
+        .map(ratatui::buffer::Cell::symbol)
+        .collect::<String>();
+    assert!(rendered.contains("older history"));
     app_server.shutdown().await?;
     Ok(())
 }

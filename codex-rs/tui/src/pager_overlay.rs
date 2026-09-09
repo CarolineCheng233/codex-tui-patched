@@ -558,6 +558,7 @@ pub(crate) struct TranscriptOverlay {
     history_state: TranscriptHistoryState,
     is_done: bool,
     mode: TranscriptMode,
+    workspace_detail_return_scroll_offset: Option<usize>,
     workspace_turns: TranscriptTurnState,
     workspace_target_mode: WorkspaceTargetMode,
     local_image_previews_enabled: bool,
@@ -634,6 +635,7 @@ impl TranscriptOverlay {
             history_state: TranscriptHistoryState::Idle,
             is_done: false,
             mode,
+            workspace_detail_return_scroll_offset: None,
             workspace_turns,
             workspace_target_mode: WorkspaceTargetMode::FollowViewport,
             local_image_previews_enabled: false,
@@ -644,6 +646,33 @@ impl TranscriptOverlay {
 
     pub(crate) fn is_workspace(&self) -> bool {
         self.mode.is_workspace()
+    }
+
+    fn open_workspace_details(&mut self) -> bool {
+        if !self.is_workspace() {
+            return false;
+        }
+        let live_tail = self.take_live_tail_renderable();
+        self.workspace_detail_return_scroll_offset = Some(self.view.scroll_offset);
+        self.mode = TranscriptMode::Viewer;
+        self.view.title = self.mode.title().to_string();
+        self.view.workspace_header = false;
+        self.rebuild_renderables(live_tail);
+        true
+    }
+
+    fn return_to_workspace(&mut self) -> bool {
+        let Some(scroll_offset) = self.workspace_detail_return_scroll_offset.take() else {
+            return false;
+        };
+        let live_tail = self.take_live_tail_renderable();
+        self.mode = TranscriptMode::Workspace;
+        self.workspace_turns.refresh_after_append(&self.cells);
+        self.view.title = self.mode.title().to_string();
+        self.view.workspace_header = true;
+        self.rebuild_renderables(live_tail);
+        self.view.scroll_offset = scroll_offset;
+        true
     }
 
     pub(crate) fn set_local_image_previews_enabled(&mut self, enabled: bool) {
@@ -772,7 +801,7 @@ impl TranscriptOverlay {
             return Ok(false);
         }
         if self.view.keymap.close_transcript.is_pressed(key_event) {
-            self.is_done = true;
+            self.open_workspace_details();
             return Ok(true);
         }
         let turn_shortcut = key_event.modifiers == crossterm::event::KeyModifiers::ALT
@@ -1554,7 +1583,11 @@ impl TranscriptOverlay {
                 e if self.view.keymap.close.is_pressed(e)
                     || self.view.keymap.close_transcript.is_pressed(e) =>
                 {
-                    self.is_done = true;
+                    if self.return_to_workspace() {
+                        tui.frame_requester().schedule_frame();
+                    } else {
+                        self.is_done = true;
+                    }
                     Ok(())
                 }
                 other => self.view.handle_key_event(tui, other),
