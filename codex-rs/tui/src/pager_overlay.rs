@@ -559,6 +559,8 @@ pub(crate) struct TranscriptOverlay {
     is_done: bool,
     mode: TranscriptMode,
     workspace_detail_return_scroll_offset: Option<usize>,
+    workspace_detail_return_anchor: Option<WorkspaceViewAnchor>,
+    workspace_restore_anchor: Option<WorkspaceViewAnchor>,
     workspace_turns: TranscriptTurnState,
     workspace_target_mode: WorkspaceTargetMode,
     local_image_previews_enabled: bool,
@@ -568,6 +570,14 @@ pub(crate) struct TranscriptOverlay {
 }
 
 const WORKSPACE_WHEEL_SCROLL_ROWS: usize = 3;
+
+/// A stable committed-cell anchor used while Workspace is temporarily rendered as Viewer.
+struct WorkspaceViewAnchor {
+    cell: Arc<dyn HistoryCell>,
+    turn_start_cell: Option<Arc<dyn HistoryCell>>,
+    previous_turn_start_cell: Option<Arc<dyn HistoryCell>>,
+    relative_row: usize,
+}
 
 /// Cache key for the active-cell "live tail" appended to the transcript overlay.
 ///
@@ -636,6 +646,8 @@ impl TranscriptOverlay {
             is_done: false,
             mode,
             workspace_detail_return_scroll_offset: None,
+            workspace_detail_return_anchor: None,
+            workspace_restore_anchor: None,
             workspace_turns,
             workspace_target_mode: WorkspaceTargetMode::FollowViewport,
             local_image_previews_enabled: false,
@@ -654,6 +666,7 @@ impl TranscriptOverlay {
         }
         let live_tail = self.take_live_tail_renderable();
         self.workspace_detail_return_scroll_offset = Some(self.view.scroll_offset);
+        self.workspace_detail_return_anchor = self.workspace_anchor_for_scroll();
         self.mode = TranscriptMode::Viewer;
         self.view.title = self.mode.title().to_string();
         self.view.workspace_header = false;
@@ -667,6 +680,7 @@ impl TranscriptOverlay {
         };
         let live_tail = self.take_live_tail_renderable();
         self.mode = TranscriptMode::Workspace;
+        self.workspace_restore_anchor = self.workspace_detail_return_anchor.take();
         self.workspace_turns.refresh_after_append(&self.cells);
         self.view.title = self.mode.title().to_string();
         self.view.workspace_header = true;
@@ -690,7 +704,65 @@ impl TranscriptOverlay {
 
     pub(crate) fn render_workspace(&mut self, area: Rect, buf: &mut Buffer) {
         self.ensure_workspace_layout_index(area.width);
+        self.restore_workspace_anchor();
         self.view.render(area, buf);
+    }
+
+    fn workspace_anchor_for_scroll(&self) -> Option<WorkspaceViewAnchor> {
+        if self.view.scroll_offset == usize::MAX {
+            return None;
+        }
+        let layout = self.workspace_layout_index.as_ref()?;
+        let cell_layout = layout
+            .cells
+            .iter()
+            .rev()
+            .find(|cell_layout| cell_layout.top <= self.view.scroll_offset)?;
+        let turn_start = (0..=cell_layout.cell_index)
+            .rev()
+            .find(|&index| self.cells[index].as_any().is::<UserHistoryCell>());
+        let previous_turn_start = turn_start.and_then(|turn_start| {
+            (0..turn_start)
+                .rev()
+                .find(|&index| self.cells[index].as_any().is::<UserHistoryCell>())
+        });
+        Some(WorkspaceViewAnchor {
+            cell: self.cells[cell_layout.cell_index].clone(),
+            turn_start_cell: turn_start.map(|index| self.cells[index].clone()),
+            previous_turn_start_cell: previous_turn_start.map(|index| self.cells[index].clone()),
+            relative_row: self.view.scroll_offset.saturating_sub(cell_layout.top),
+        })
+    }
+
+    fn restore_workspace_anchor(&mut self) {
+        let Some(anchor) = self.workspace_restore_anchor.take() else {
+            return;
+        };
+        let Some(layout) = self.workspace_layout_index.as_ref() else {
+            return;
+        };
+        let find_cell_layout = |cell: &Arc<dyn HistoryCell>| {
+            layout
+                .cells
+                .iter()
+                .find(|cell_layout| Arc::ptr_eq(&self.cells[cell_layout.cell_index], cell))
+        };
+        let cell_layout = find_cell_layout(&anchor.cell)
+            .or_else(|| anchor.turn_start_cell.as_ref().and_then(find_cell_layout))
+            .or_else(|| {
+                anchor
+                    .previous_turn_start_cell
+                    .as_ref()
+                    .and_then(find_cell_layout)
+            })
+            .or_else(|| layout.cells.first());
+        if let Some(cell_layout) = cell_layout {
+            self.view.scroll_offset = cell_layout.top.saturating_add(
+                anchor
+                    .relative_row
+                    .min(cell_layout.base_height.saturating_sub(1)),
+            );
+        }
     }
 
     fn invalidate_workspace_layout(&mut self) {

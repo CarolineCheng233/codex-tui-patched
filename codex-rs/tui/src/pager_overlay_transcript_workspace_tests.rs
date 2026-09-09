@@ -178,6 +178,181 @@ fn workspace_details_prepend_keeps_the_folded_turn() {
 }
 
 #[test]
+fn workspace_details_resize_restore_keeps_the_same_top_cell() {
+    let cells = vec![
+        Arc::new(PlainHistoryCell::new(vec![Line::from(
+            "padding ".repeat(30),
+        )])) as Arc<dyn crate::history_cell::HistoryCell>,
+        Arc::new(PlainHistoryCell::new(vec![Line::from("saved anchor")]))
+            as Arc<dyn crate::history_cell::HistoryCell>,
+        Arc::new(PlainHistoryCell::new(vec![Line::from(
+            "newer content ".repeat(30),
+        )])) as Arc<dyn crate::history_cell::HistoryCell>,
+    ];
+    let mut overlay =
+        TranscriptOverlay::new_workspace(cells, crate::keymap::RuntimeKeymap::defaults().pager);
+    let wide = Rect::new(0, 0, 80, 8);
+    overlay.render_workspace(wide, &mut ratatui::buffer::Buffer::empty(wide));
+    overlay.view.scroll_offset = overlay
+        .workspace_layout_index
+        .as_ref()
+        .expect("wide workspace layout")
+        .cells
+        .iter()
+        .find(|layout| layout.cell_index == 1)
+        .expect("anchor cell in wide layout")
+        .top;
+
+    assert!(overlay.open_workspace_details());
+    assert!(overlay.return_to_workspace());
+
+    let narrow = Rect::new(0, 0, 20, 8);
+    overlay.render_workspace(narrow, &mut ratatui::buffer::Buffer::empty(narrow));
+    let anchor_top = overlay
+        .workspace_layout_index
+        .as_ref()
+        .expect("narrow workspace layout")
+        .cells
+        .iter()
+        .find(|layout| layout.cell_index == 1)
+        .expect("anchor cell in narrow layout")
+        .top;
+    assert_eq!(overlay.view.scroll_offset, anchor_top);
+}
+
+#[test]
+fn workspace_details_restore_deleted_anchor_to_previous_turn() {
+    let previous_user = Arc::new(UserHistoryCell {
+        message: "previous turn".into(),
+        text_elements: Vec::new(),
+        local_image_paths: Vec::new(),
+        remote_image_urls: Vec::new(),
+    }) as Arc<dyn crate::history_cell::HistoryCell>;
+    let previous_reply = Arc::new(PlainHistoryCell::new(vec![Line::from("previous reply")]))
+        as Arc<dyn crate::history_cell::HistoryCell>;
+    let removed_user = Arc::new(UserHistoryCell {
+        message: "removed turn".into(),
+        text_elements: Vec::new(),
+        local_image_paths: Vec::new(),
+        remote_image_urls: Vec::new(),
+    }) as Arc<dyn crate::history_cell::HistoryCell>;
+    let removed_anchor = Arc::new(PlainHistoryCell::new(vec![Line::from("removed anchor")]))
+        as Arc<dyn crate::history_cell::HistoryCell>;
+    let newer_user = Arc::new(UserHistoryCell {
+        message: "newer turn".into(),
+        text_elements: Vec::new(),
+        local_image_paths: Vec::new(),
+        remote_image_urls: Vec::new(),
+    }) as Arc<dyn crate::history_cell::HistoryCell>;
+    let newer_reply = Arc::new(PlainHistoryCell::new(vec![Line::from(
+        "newer reply ".repeat(30),
+    )])) as Arc<dyn crate::history_cell::HistoryCell>;
+    let mut overlay = TranscriptOverlay::new_workspace(
+        vec![
+            previous_user.clone(),
+            previous_reply.clone(),
+            removed_user,
+            removed_anchor,
+            newer_user.clone(),
+            newer_reply.clone(),
+        ],
+        crate::keymap::RuntimeKeymap::defaults().pager,
+    );
+    let area = Rect::new(0, 0, 40, 8);
+    overlay.render_workspace(area, &mut ratatui::buffer::Buffer::empty(area));
+    overlay.view.scroll_offset = overlay
+        .workspace_layout_index
+        .as_ref()
+        .expect("workspace layout")
+        .cells
+        .iter()
+        .find(|layout| layout.cell_index == 3)
+        .expect("removed anchor layout")
+        .top;
+    assert!(overlay.open_workspace_details());
+    overlay.replace_cells(vec![previous_user, previous_reply, newer_user, newer_reply]);
+
+    assert!(overlay.return_to_workspace());
+    overlay.render_workspace(area, &mut ratatui::buffer::Buffer::empty(area));
+    let previous_turn_top = overlay
+        .workspace_layout_index
+        .as_ref()
+        .expect("restored workspace layout")
+        .cells
+        .iter()
+        .find(|layout| layout.cell_index == 0)
+        .expect("previous turn layout")
+        .top;
+    assert_eq!(overlay.view.scroll_offset, previous_turn_top);
+}
+
+#[test]
+fn workspace_parity_details_append_anchor() {
+    let cells = vec![
+        Arc::new(PlainHistoryCell::new(vec![Line::from(
+            "padding ".repeat(30),
+        )])) as Arc<dyn crate::history_cell::HistoryCell>,
+        Arc::new(PlainHistoryCell::new(vec![Line::from("saved anchor")]))
+            as Arc<dyn crate::history_cell::HistoryCell>,
+        Arc::new(PlainHistoryCell::new(vec![Line::from(
+            "existing tail ".repeat(30),
+        )])) as Arc<dyn crate::history_cell::HistoryCell>,
+    ];
+    let mut overlay =
+        TranscriptOverlay::new_workspace(cells, crate::keymap::RuntimeKeymap::defaults().pager);
+    let area = Rect::new(0, 0, 40, 8);
+    overlay.render_workspace(area, &mut ratatui::buffer::Buffer::empty(area));
+    overlay.view.scroll_offset = overlay
+        .workspace_layout_index
+        .as_ref()
+        .expect("workspace layout")
+        .cells
+        .iter()
+        .find(|layout| layout.cell_index == 1)
+        .expect("anchor layout")
+        .top;
+    assert!(overlay.open_workspace_details());
+    overlay.insert_cell(Arc::new(PlainHistoryCell::new(vec![Line::from(
+        "appended once",
+    )])));
+
+    assert!(overlay.return_to_workspace());
+    overlay.render_workspace(area, &mut ratatui::buffer::Buffer::empty(area));
+    let anchor_top = overlay
+        .workspace_layout_index
+        .as_ref()
+        .expect("restored workspace layout")
+        .cells
+        .iter()
+        .find(|layout| layout.cell_index == 1)
+        .expect("anchor layout after append")
+        .top;
+    assert_eq!(overlay.view.scroll_offset, anchor_top);
+    assert_eq!(overlay.cells.len(), 4);
+}
+
+#[test]
+fn workspace_parity_details_follow_bottom() {
+    let cells = vec![Arc::new(PlainHistoryCell::new(vec![Line::from(
+        "existing content ".repeat(30),
+    )])) as Arc<dyn crate::history_cell::HistoryCell>];
+    let mut overlay =
+        TranscriptOverlay::new_workspace(cells, crate::keymap::RuntimeKeymap::defaults().pager);
+    let area = Rect::new(0, 0, 40, 8);
+    overlay.render_workspace(area, &mut ratatui::buffer::Buffer::empty(area));
+    overlay.view.scroll_offset = usize::MAX;
+    assert!(overlay.open_workspace_details());
+    overlay.insert_cell(Arc::new(PlainHistoryCell::new(vec![Line::from(
+        "appended once",
+    )])));
+
+    assert!(overlay.return_to_workspace());
+    overlay.render_workspace(area, &mut ratatui::buffer::Buffer::empty(area));
+    assert!(overlay.view.is_scrolled_to_bottom());
+    assert_eq!(overlay.cells.len(), 2);
+}
+
+#[test]
 fn workspace_bottom_append_selects_the_new_user_turn() {
     let cells = vec![
         Arc::new(UserHistoryCell {

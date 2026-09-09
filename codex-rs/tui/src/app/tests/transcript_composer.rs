@@ -346,6 +346,48 @@ async fn workspace_parity_details_close_returns_to_workspace() -> Result<()> {
 }
 
 #[tokio::test]
+async fn workspace_parity_details_thread_change_clears_old_overlay() -> Result<()> {
+    let (mut app, _app_event_rx, _op_rx) = make_test_app_with_channels().await;
+    app.local_settings.tui.transcript_workspace = true;
+    let mut app_server = crate::start_embedded_app_server_for_picker(&app.config).await?;
+    let mut tui = crate::tui::test_support::make_test_tui()?;
+    let session = test_thread_session(ThreadId::new(), app.config.cwd.to_path_buf());
+    app.chat_widget.handle_thread_session(session);
+    app.transcript_cells
+        .push(Arc::new(PlainHistoryCell::new(vec![
+            "old thread history".into(),
+        ])));
+    app.open_transcript_overlay(&mut tui);
+    app.handle_tui_event(
+        &mut tui,
+        &mut app_server,
+        TuiEvent::Key(KeyEvent::new(KeyCode::Char('t'), KeyModifiers::CONTROL)),
+    )
+    .await?;
+    assert!(matches!(
+        &app.overlay,
+        Some(Overlay::Transcript(overlay)) if !overlay.is_workspace()
+    ));
+
+    let started = app_server.start_thread(&app.config).await?;
+    app.replace_chat_widget_with_app_server_thread(
+        &mut tui,
+        started,
+        crate::app::session_lifecycle::ThreadAttachPresentation::SessionLineage,
+        /*initial_user_message*/ None,
+    )
+    .await?;
+
+    assert!(app.overlay.is_none());
+    assert!(
+        app.transcript_cells.is_empty(),
+        "new thread must not keep old thread history"
+    );
+    app_server.shutdown().await?;
+    Ok(())
+}
+
+#[tokio::test]
 async fn workspace_parity_details_prepend_sync() -> Result<()> {
     let (mut app, _app_event_rx, _op_rx) = make_test_app_with_channels().await;
     app.local_settings.tui.transcript_workspace = true;
