@@ -220,7 +220,18 @@ async fn transcript_workspace_routes_typing_and_ctrl_c_to_the_existing_composer(
         TuiEvent::Key(KeyEvent::new(KeyCode::Char('t'), KeyModifiers::CONTROL)),
     )
     .await?;
-    assert!(app.overlay.is_none());
+    assert!(matches!(
+        &app.overlay,
+        Some(Overlay::Transcript(overlay)) if !overlay.is_workspace()
+    ));
+    app.handle_tui_event(
+        &mut tui,
+        &mut app_server,
+        TuiEvent::Key(KeyEvent::new(KeyCode::Char('t'), KeyModifiers::CONTROL)),
+    )
+    .await?;
+    assert!(app.transcript_workspace_active());
+    app.close_transcript_overlay(&mut tui);
     app_server.shutdown().await?;
     Ok(())
 }
