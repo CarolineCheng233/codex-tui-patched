@@ -24,6 +24,17 @@ impl App {
         app_server: &mut AppServerSession,
         event: TuiEvent,
     ) -> Result<bool> {
+        if !self.chat_widget.no_modal_or_popup_active() {
+            match event {
+                TuiEvent::Key(key_event) => self.chat_widget.handle_key_event(key_event),
+                TuiEvent::Paste(pasted) => {
+                    let pasted = pasted.replace("\r\n", "\n").replace('\r', "\n");
+                    self.chat_widget.handle_paste(pasted);
+                }
+                event => self.overlay_forward_event(tui, event)?,
+            }
+            return Ok(true);
+        }
         let should_load_older = match (&event, self.overlay.as_ref()) {
             (TuiEvent::Key(key_event), Some(Overlay::Transcript(overlay))) => {
                 overlay.workspace_should_load_older(*key_event)

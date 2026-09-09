@@ -3,6 +3,8 @@
 //! The default-off feature must leave the existing viewer and its draft intact.
 
 use super::*;
+use crate::bottom_pane::SelectionItem;
+use crate::bottom_pane::SelectionViewParams;
 use crate::history_cell::PlainHistoryCell;
 use crate::pager_overlay::TranscriptWorkspaceLayout;
 use crate::render::renderable::Renderable;
@@ -336,6 +338,57 @@ async fn workspace_parity_details_prepend_sync() -> Result<()> {
         .map(ratatui::buffer::Cell::symbol)
         .collect::<String>();
     assert!(rendered.contains("older history"));
+    app_server.shutdown().await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn workspace_input_popup_owns_page_navigation() -> Result<()> {
+    let (mut app, mut app_event_rx, _op_rx) = make_test_app_with_channels().await;
+    app.local_settings.tui.transcript_workspace = true;
+    let mut app_server = start_config_write_test_app_server(&app).await?;
+    let mut tui = crate::tui::test_support::make_test_tui()?;
+    let session = test_thread_session(ThreadId::new(), app.config.cwd.to_path_buf());
+    app.chat_widget.handle_thread_session(session);
+    app.open_transcript_overlay(&mut tui);
+    app.chat_widget.show_selection_view(SelectionViewParams {
+        items: vec![
+            SelectionItem {
+                name: "First".to_string(),
+                actions: vec![Box::new(|tx| tx.send(AppEvent::OpenSkillsList))],
+                dismiss_on_select: true,
+                ..Default::default()
+            },
+            SelectionItem {
+                name: "Second".to_string(),
+                actions: vec![Box::new(|tx| tx.send(AppEvent::OpenManageSkillsPopup))],
+                dismiss_on_select: true,
+                ..Default::default()
+            },
+        ],
+        ..Default::default()
+    });
+
+    app.handle_tui_event(
+        &mut tui,
+        &mut app_server,
+        TuiEvent::Key(KeyEvent::new(KeyCode::PageDown, KeyModifiers::NONE)),
+    )
+    .await?;
+    app.handle_tui_event(
+        &mut tui,
+        &mut app_server,
+        TuiEvent::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
+    )
+    .await?;
+
+    let events = std::iter::from_fn(|| app_event_rx.try_recv().ok()).collect::<Vec<_>>();
+    assert!(
+        events
+            .iter()
+            .any(|event| matches!(event, AppEvent::OpenManageSkillsPopup)),
+        "expected the second popup action, got {events:?}"
+    );
     app_server.shutdown().await?;
     Ok(())
 }
