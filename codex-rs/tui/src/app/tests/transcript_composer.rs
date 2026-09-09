@@ -223,6 +223,28 @@ async fn transcript_workspace_routes_typing_and_ctrl_c_to_the_existing_composer(
 }
 
 #[tokio::test]
+async fn workspace_input_space_reaches_composer() -> Result<()> {
+    let (mut app, _app_event_rx, _op_rx) = make_test_app_with_channels().await;
+    app.local_settings.tui.transcript_workspace = true;
+    let mut app_server = start_config_write_test_app_server(&app).await?;
+    let mut tui = crate::tui::test_support::make_test_tui()?;
+    let session = test_thread_session(ThreadId::new(), app.config.cwd.to_path_buf());
+    app.chat_widget.handle_thread_session(session);
+    app.open_transcript_overlay(&mut tui);
+    app.chat_widget.apply_external_edit("hello".into());
+
+    press_key(&mut app, &mut tui, &mut app_server, KeyCode::Char(' ')).await?;
+
+    std::thread::sleep(crate::bottom_pane::ChatComposer::recommended_paste_flush_delay());
+    app.handle_tui_event(&mut tui, &mut app_server, TuiEvent::Draw)
+        .await?;
+
+    assert_eq!(app.chat_widget.composer_text_with_pending(), "hello ");
+    app_server.shutdown().await?;
+    Ok(())
+}
+
+#[tokio::test]
 async fn enabled_transcript_workspace_opens_on_the_first_draw() -> Result<()> {
     let (mut app, _app_event_rx, _op_rx) = make_test_app_with_channels().await;
     app.local_settings.tui.transcript_workspace = true;

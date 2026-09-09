@@ -852,8 +852,7 @@ impl TranscriptOverlay {
     }
 
     fn workspace_navigation_key(&self, key_event: KeyEvent) -> bool {
-        self.view.keymap.page_up.is_pressed(key_event)
-            || self.view.keymap.page_down.is_pressed(key_event)
+        matches!(key_event.code, KeyCode::PageUp | KeyCode::PageDown)
     }
 
     /// Keep the fold target aligned with the turn immediately above the
