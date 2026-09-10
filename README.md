@@ -1,81 +1,109 @@
-<p align="center"><strong>Codex CLI</strong> is a coding agent from OpenAI that runs locally on your computer.
-<p align="center">
-  <img src="https://github.com/openai/codex/blob/main/.github/codex-cli-splash.png" alt="Codex CLI splash" width="80%" />
-</p>
-</br>
-If you want Codex in your code editor (VS Code, Cursor, Windsurf), <a href="https://developers.openai.com/codex/ide">install in your IDE.</a>
-</br>If you want the desktop app experience, run <code>codex app</code> or visit <a href="https://chatgpt.com/codex?app-landing-page=true">the Codex App page</a>.
-</br>If you are looking for the <em>cloud-based agent</em> from OpenAI, <strong>Codex Web</strong>, go to <a href="https://chatgpt.com/codex">chatgpt.com/codex</a>.</p>
+# Codex TUI Workspace
 
----
+> A private downstream of [OpenAI Codex](https://github.com/openai/codex) that makes long-running terminal conversations easier to read, navigate, and continue writing in.
+>
+> 基于 [OpenAI Codex](https://github.com/openai/codex) 的私有下游仓库，为长时间终端对话提供更易读、更易浏览且可持续输入的 Workspace 体验。
 
-## Quickstart
+## Why this repository exists
 
-### Installing and running Codex CLI
+Codex's normal chat presentation is intentionally compact: reads, searches, and commands communicate progress without turning the conversation into a wall of raw terminal output. A transcript viewer, meanwhile, needs the complete record. This repository combines those two needs in one terminal workflow:
 
-Run the following on Mac or Linux to install Codex CLI:
+- keep the **official normal chat presentation** as the default Workspace view;
+- keep a **fixed Composer** at the bottom while history remains independently scrollable;
+- let you open the **full transcript on demand**, without losing the draft or the current place in history;
+- make older turns practical to navigate, select, fold, and revisit.
 
-```shell
-curl -fsSL https://chatgpt.com/codex/install.sh | sh
+Codex 的正常聊天界面会以紧凑形式呈现读取、搜索和命令进度，而完整 transcript 则适合查看原始记录。本仓库将两种需求组合到同一终端工作流中：
+
+- Workspace 默认复用**官方正常聊天展示**；
+- Composer 固定在底部，历史可独立滚动；
+- 按需打开**完整 transcript**，同时保留草稿和当前历史位置；
+- 便于定位、选择、折叠和回看旧轮次。
+
+## What it changes
+
+| Capability | Behavior |
+| --- | --- |
+| Official-style presentation | Read, list, search, and command cells use the same compact display path as normal Codex chat. Full raw output remains available in transcript details. |
+| Fixed Composer | The input area stays at the bottom while you scroll through history and continue composing. |
+| Transcript Workspace | `PageUp`/`PageDown` and the mouse wheel browse history without consuming ordinary text input. |
+| Turn navigation | `Alt+Up` / `Alt+Down` select a user turn; `Alt+Left` / `Alt+Right` fold or expand it. |
+| Detail round trip | In Workspace, `Ctrl+T` opens the complete transcript. Closing the detail view returns to the same Workspace context. |
+| Persistent history | Resumed and paginated command and web-search history use the normal display path while retaining detail data. |
+| Local image previews | Workspace preserves the existing local input-image preview behavior supported by the TUI. |
+
+| 能力 | 行为 |
+| --- | --- |
+| 官方风格展示 | Read、List、Search 和命令 cell 默认使用与 Codex 正常聊天一致的紧凑展示；完整原始输出仍可在详情中查看。 |
+| 固定 Composer | 浏览历史或查看旧轮次时，输入区始终固定在终端底部。 |
+| Transcript Workspace | `PageUp` / `PageDown` 与鼠标滚轮浏览历史，不会吞掉普通文本输入。 |
+| 轮次导航 | `Alt+Up` / `Alt+Down` 选择用户轮次；`Alt+Left` / `Alt+Right` 折叠或展开。 |
+| 详情往返 | 在 Workspace 中按 `Ctrl+T` 打开完整 transcript；关闭详情后回到原来的 Workspace 上下文。 |
+| 持久化历史 | 恢复会话和分页载入的命令、网页搜索历史保持正常展示，并保留详情所需的数据。 |
+| 本地图片预览 | Workspace 保留 TUI 已有的本地输入图片预览能力。 |
+
+## Quick start
+
+Build a local package from this checkout, then run its launcher:
+
+```sh
+cd "/Users/chy/projects/codex-tui-patched"
+./scripts/build-patched-tui.sh
+./scripts/codex-tui.sh
 ```
 
-Run the following on Windows to install Codex CLI:
+To enable the Workspace presentation, add the following to `~/.codex/config.toml`:
 
-```shell
-powershell -ExecutionPolicy ByPass -c "irm https://chatgpt.com/codex/install.ps1 | iex"
+```toml
+[tui]
+transcript_workspace = true
 ```
 
-The standalone installers download from `https://releases.openai.com/codex` by default and fall back to GitHub Releases if a metadata or asset download is unavailable. To force GitHub Releases, set `CODEX_INSTALLER_USE_RELEASES_OPENAI_COM` to `false` (`0` and `no` are also accepted):
+The local package lives in `codex-rs/target/codex-tui-package`. It is separate from the system-installed `codex`; use the system binary, or disable `transcript_workspace`, to return to the stock TUI.
 
-```shell
-curl -fsSL https://chatgpt.com/codex/install.sh | CODEX_INSTALLER_USE_RELEASES_OPENAI_COM=false sh
+从此工作树构建本地包，然后运行启动器：
+
+```sh
+cd "/Users/chy/projects/codex-tui-patched"
+./scripts/build-patched-tui.sh
+./scripts/codex-tui.sh
 ```
 
-```powershell
-$env:CODEX_INSTALLER_USE_RELEASES_OPENAI_COM='false'; irm https://chatgpt.com/codex/install.ps1 | iex
+要启用 Workspace，请在 `~/.codex/config.toml` 中加入：
+
+```toml
+[tui]
+transcript_workspace = true
 ```
 
-Codex CLI can also be installed via the following package managers:
+本地包位于 `codex-rs/target/codex-tui-package`，与系统安装的 `codex` 完全分离。运行系统 `codex` 或关闭 `transcript_workspace`，即可回到官方 TUI。
 
-```shell
-# Install using npm
-npm install -g @openai/codex
-```
+## How to use Workspace
 
-```shell
-# Install using Homebrew
-brew install --cask codex
-```
+1. Open the transcript in Codex as usual.
+2. Read, search, and command activity stays compact in the Workspace view.
+3. Scroll history with the mouse wheel or `PageUp` / `PageDown`; keep writing in the Composer at any time.
+4. Use `Alt+Up` / `Alt+Down` to choose a turn, then `Alt+Left` / `Alt+Right` to fold or expand it.
+5. Press `Ctrl+T` when you need the complete transcript, then close the detail view to return to Workspace.
 
-Then simply run `codex` to get started.
+1. 按 Codex 原有方式打开 transcript。
+2. Workspace 默认以紧凑形式展示读取、搜索和命令活动。
+3. 用鼠标滚轮或 `PageUp` / `PageDown` 浏览历史，同时可继续在 Composer 中输入。
+4. 使用 `Alt+Up` / `Alt+Down` 选择轮次，再用 `Alt+Left` / `Alt+Right` 折叠或展开。
+5. 需要原始完整记录时按 `Ctrl+T`，关闭详情后即可回到 Workspace。
 
-<details>
-<summary>You can also go to the <a href="https://github.com/openai/codex/releases/latest">latest GitHub Release</a> and download the appropriate binary for your platform.</summary>
+## Downstream relationship
 
-Each GitHub Release contains many executables, but in practice, you likely want one of these:
+This repository keeps Codex's agent runtime, authentication, configuration, protocol, and session formats aligned with upstream whenever possible. Its local changes focus on `codex-rs/tui/`; the system-installed Codex remains untouched as an immediate fallback.
 
-- macOS
-  - Apple Silicon/arm64: `codex-aarch64-apple-darwin.tar.gz`
-  - x86_64 (older Mac hardware): `codex-x86_64-apple-darwin.tar.gz`
-- Linux
-  - x86_64: `codex-x86_64-unknown-linux-musl.tar.gz`
-  - arm64: `codex-aarch64-unknown-linux-musl.tar.gz`
+本仓库尽可能保持 Codex 的 agent runtime、认证、配置、协议和会话格式与上游一致。本地改动主要集中在 `codex-rs/tui/`，系统安装的 Codex 不会被修改，可随时作为回退方案。
 
-Each archive contains a single entry with the platform baked into the name (e.g., `codex-x86_64-unknown-linux-musl`), so you likely want to rename it to `codex` after extracting it.
+- [Upstream maintenance policy / 上游维护策略](UPSTREAM.md)
+- [Workspace implementation plan / Workspace 实施方案](docs/superpowers/plans/2026-09-09-official-chat-workspace-parity-plan.md)
+- [Codex upstream repository / Codex 上游仓库](https://github.com/openai/codex)
 
-</details>
+## License
 
-### Using Codex with your ChatGPT plan
+This repository retains the upstream [Apache-2.0 License](LICENSE).
 
-Run `codex` and select **Sign in with ChatGPT**. We recommend signing into your ChatGPT account to use Codex as part of your Plus, Pro, Business, Edu, or Enterprise plan. [Learn more about what's included in your ChatGPT plan](https://help.openai.com/en/articles/11369540-codex-in-chatgpt).
-
-You can also use Codex with an API key, but this requires [additional setup](https://developers.openai.com/codex/auth#sign-in-with-an-api-key).
-
-## Docs
-
-- [**Codex Documentation**](https://developers.openai.com/codex)
-- [**Contributing**](./docs/contributing.md)
-- [**Installing & building**](./docs/install.md)
-- [**Open source fund**](./docs/open-source-fund.md)
-
-This repository is licensed under the [Apache-2.0 License](LICENSE).
+本仓库沿用上游的 [Apache-2.0 License](LICENSE)。
